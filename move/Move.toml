@@ -7,7 +7,9 @@ version = "1.0.0"
 # Provided at compile/publish time: --named-addresses gridzero=0x<deployer>
 gridzero = "_"
 
-[dependencies.InitiaStdlib]
+# MiniMove rollup target: minitia_stdlib (same 0x1 stdlib as L1's initia_stdlib,
+# minus L1-only modules staking/stableswap/minitswap/incentive — none used here).
+[dependencies.MinitiaStdlib]
 git = "https://github.com/initia-labs/movevm.git"
-subdir = "precompile/modules/initia_stdlib"
+subdir = "precompile/modules/minitia_stdlib"
 rev = "main"

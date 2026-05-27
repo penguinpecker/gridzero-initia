@@ -132,6 +132,26 @@ export async function getConfig() {
   };
 }
 
+// escrow_balance(): u64 — INIT held in the game escrow (treasury) as raw uinit string.
+export async function getEscrowBalance() {
+  try {
+    const r = await gameView("escrow_balance");
+    return String(r);
+  } catch {
+    return "0";
+  }
+}
+
+// accumulated_fees(): u64 — protocol fees accrued (raw uinit string).
+export async function getAccumulatedFees() {
+  try {
+    const r = await gameView("accumulated_fees");
+    return String(r);
+  } catch {
+    return "0";
+  }
+}
+
 // zero_token::metadata_address(): address
 let _zeroMetaCache = process.env.NEXT_PUBLIC_ZERO_METADATA || null;
 export async function getZeroMetadata() {
@@ -208,4 +228,25 @@ export function toRawUinit(human) {
 // init1... bech32 sanity check.
 export function isInitAddress(a) {
   return /^init1[0-9a-z]{38,}$/.test(String(a).trim());
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RESOLVER HISTORY — off-chain resolved-round records (payout/mint tx hash
+// + winner addresses) from the resolver service. Best-effort; never throws.
+// GET ${NEXT_PUBLIC_RESOLVER_URL}/history?limit=N → newest-first JSON array of
+//   { roundId, txHash, skipped, winningCell, players, isBonus,
+//     initPerWinner, zeroPerWinner, winners[], ts }
+// ═══════════════════════════════════════════════════════════════
+export async function getResolverHistory(limit = 80) {
+  const url = process.env.NEXT_PUBLIC_RESOLVER_URL || "";
+  if (!url) return [];
+  try {
+    const base = url.replace(/\/$/, "");
+    const res = await fetch(`${base}/history?limit=${limit}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
 }

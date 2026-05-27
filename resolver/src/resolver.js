@@ -26,6 +26,7 @@ import {
   getCurrentRound,
   getRound,
   getCellCounts,
+  getCellPlayers,
   resolveRound,
   skipEmptyRound,
 } from "./initia.js";
@@ -83,6 +84,20 @@ function startServer(getLatestRoundId) {
     res.json({ ok: true, clients: clients.size, round: getLatestRoundId() });
   });
 
+  // Resolved-round history with payout/mint tx hashes + winner addresses, so the
+  // frontend history tables can link the transaction that paid INIT + minted $ZERO.
+  app.get("/history", (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, MAX_HISTORY);
+    res.json(history.slice(0, limit));
+  });
+
+  app.get("/round/:id", (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    const rid = Number(req.params.id);
+    res.json(history.find((h) => h.roundId === rid) || null);
+  });
+
   app.get("/events", (req, res) => {
     res.set({
       "Content-Type": "text/event-stream",
@@ -127,6 +142,16 @@ let fulfillerAddr;
 let latestRoundId = 0; // for the `connected` payload + /health
 let busy = false; // single-flight guard so overlapping polls don't double-submit
 const handledRounds = new Set(); // round ids we've already resolved/skipped this process
+
+// Resolved-round history (newest-first) so the frontend can show payout/mint tx links.
+// Each record: { roundId, txHash, skipped, winningCell, players, isBonus,
+//                initPerWinner, zeroPerWinner, winners:[addr], ts }
+const MAX_HISTORY = 200;
+const history = [];
+function recordResolved(rec) {
+  history.unshift(rec);
+  if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+}
 
 // cell_picked diffing: remember last seen per-cell counts for the active round
 let watchRoundId = 0n;
@@ -202,12 +227,27 @@ async function handleFinishedRound(round) {
         `[resolve] round ${ridNum} resolved: winningCell=${winningCell} bonus=${isBonus} tx=${txHash}`
       );
 
+      // Capture the winner addresses so the frontend can link the payout/mint tx
+      // to each winner's wallet.
+      let winners = [];
+      if (winningCell != null) {
+        winners = await getCellPlayers(client, CONFIG.moduleAddr, rid, winningCell).catch(() => []);
+      }
+      recordResolved({
+        roundId: ridNum, txHash, skipped: false, winningCell, players, isBonus,
+        initPerWinner: detail ? detail.initPerWinner.toString() : "0",
+        zeroPerWinner: detail ? detail.zeroPerWinner.toString() : "0",
+        winners, ts: Date.now(),
+      });
+
       broadcast("round_resolved", {
         roundId: ridNum,
         skipped: false,
         winningCell,
         players,
         txHash,
+        winners,
+        isBonus,
       });
       if (isBonus) {
         broadcast("bonus_round", { roundId: ridNum, winningCell, players, txHash });
@@ -218,6 +258,10 @@ async function handleFinishedRound(round) {
       const txHash = res?.txhash;
       console.log(`[skip] round ${ridNum} skipped: tx=${txHash}`);
 
+      recordResolved({
+        roundId: ridNum, txHash, skipped: true, winningCell: null, players: 0,
+        isBonus: false, initPerWinner: "0", zeroPerWinner: "0", winners: [], ts: Date.now(),
+      });
       broadcast("round_resolved", {
         roundId: ridNum,
         skipped: true,

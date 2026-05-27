@@ -4,7 +4,7 @@
 // Replaces the old Supabase backend. Everything persists in
 // localStorage so history survives reloads with NO external backend.
 //
-//   gz:rounds:v1          → map roundId -> { roundId, cell, players, pot }
+//   gz:rounds:v1          → map roundId -> { roundId, cell, players, pot, isBonus }
 //   gz:mypicks:v1:<addr>  → array of { roundId, cell }  (one address)
 //
 // All chain reads happen in TheGrid.js via @/lib/initia; this module
@@ -56,11 +56,14 @@ export function cacheRound(summary) {
   const roundId = Number(summary.roundId);
   if (!Number.isFinite(roundId) || roundId <= 0) return;
   const map = readJSON(ROUNDS_KEY, {});
+  // Preserve any previously cached fields (e.g. isBonus) when re-caching.
+  const prev = map[roundId] || {};
   map[roundId] = {
     roundId,
     cell: Number(summary.cell),
     players: Number(summary.players),
     pot: String(summary.pot),
+    isBonus: summary.isBonus != null ? Boolean(summary.isBonus) : Boolean(prev.isBonus),
   };
   writeJSON(ROUNDS_KEY, map);
 }
@@ -74,6 +77,7 @@ export function getCachedRounds() {
       cell: Number(r.cell),
       players: Number(r.players),
       pot: String(r.pot),
+      isBonus: Boolean(r.isBonus),
     }))
     .sort((a, b) => b.roundId - a.roundId);
 }
@@ -83,16 +87,24 @@ export function getCachedRounds() {
 // ═══════════════════════════════════════════════════════════════
 
 // Append a pick for an address (dedupe by roundId — last write wins).
-export function recordPick(address, roundId, cell) {
+// Optionally persists the player's own entry (pick) tx hash.
+export function recordPick(address, roundId, cell, pickTxHash) {
   if (!address || roundId == null) return;
   const rid = Number(roundId);
   if (!Number.isFinite(rid) || rid <= 0) return;
   const key = picksKey(address);
   const picks = readJSON(key, []);
+  const prev = (Array.isArray(picks) ? picks : []).find(
+    (p) => Number(p.roundId) === rid
+  );
   const filtered = (Array.isArray(picks) ? picks : []).filter(
     (p) => Number(p.roundId) !== rid
   );
-  filtered.push({ roundId: rid, cell: Number(cell) });
+  const entry = { roundId: rid, cell: Number(cell) };
+  // Preserve a previously-stored tx hash if this call doesn't supply one.
+  const tx = pickTxHash || (prev && prev.pickTxHash) || null;
+  if (tx) entry.pickTxHash = String(tx);
+  filtered.push(entry);
   writeJSON(key, filtered);
 }
 
@@ -101,6 +113,10 @@ export function getMyPicks(address) {
   if (!address) return [];
   const picks = readJSON(picksKey(address), []);
   return (Array.isArray(picks) ? picks : [])
-    .map((p) => ({ roundId: Number(p.roundId), cell: Number(p.cell) }))
+    .map((p) => ({
+      roundId: Number(p.roundId),
+      cell: Number(p.cell),
+      pickTxHash: p.pickTxHash ? String(p.pickTxHash) : null,
+    }))
     .sort((a, b) => b.roundId - a.roundId);
 }

@@ -143,6 +143,16 @@ export async function getCellCounts(client, moduleAddr, roundId) {
   return (out ?? []).map((n) => Number(n));
 }
 
+/**
+ * gridzero::game::get_cell_players(round_id, cell) -> vector<address>
+ * Used to capture the winner addresses for a resolved round.
+ */
+export async function getCellPlayers(client, moduleAddr, roundId, cell) {
+  const args = [serializeU64(roundId), bcs.u8().serialize(Number(cell)).toBase64()];
+  const out = await viewFn(client, moduleAddr, "get_cell_players", args);
+  return out ?? [];
+}
+
 // ---------------------------------------------------------------------------
 // BCS argument encoding
 // ---------------------------------------------------------------------------

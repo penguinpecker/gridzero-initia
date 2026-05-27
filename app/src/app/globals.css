@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════════════════════════
+   gridZERO — Initia brand base
+   Dark canvas (#0C0C0C), gray ramp, cyan (#2B6BFF) signature accent.
+   ═══════════════════════════════════════════════════════════════ */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -5,7 +9,156 @@
 }
 
 body {
-  background: #060606;
+  background: #0C0C0C;
   margin: 0;
   padding: 0;
+}
+
+/* Cyan text-selection (Initia signature accent) */
+::selection {
+  background: rgba(43, 107, 255, 0.25);
+  color: #F5F5F5;
+}
+
+/* Slim cyan-tinted scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #101010;
+}
+::-webkit-scrollbar-thumb {
+  background: #2F3337;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #383D42;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   /play — FULL-WIDTH RESPONSIVE LAYOUT
+   Base (mobile / tablet < 1024px): single stacked column, matching
+   the original ~620px-wide centered flow. The inline maxWidth values
+   on the React style objects (620 / 520) continue to constrain width.
+   The @media (min-width:1024px) block below switches to a full-width
+   two-column desktop grid and relaxes those inline caps with overrides.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Outer container — relaxed to full page width, capped at ~1280 on desktop */
+.play-shell {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Stats strip — responsive grid of the 8 stat cards.
+   Override the inline flex-column so cards tile instead of stacking. */
+.play-stats {
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 6px !important;
+}
+@media (min-width: 480px) {
+  .play-stats {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* Two-column row: stacked on mobile, side-by-side on desktop */
+.play-cols {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Game (left) + sidebar (right) columns — full width when stacked */
+.play-grid-col,
+.play-side-col {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ─── DESKTOP (>= 1024px): full-width multi-column layout ─── */
+@media (min-width: 1024px) {
+  /* Let the play shell use the page width, capped at 1280 with side padding */
+  .play-shell {
+    max-width: 1280px;
+    padding: 0 24px;
+    align-items: stretch;
+  }
+
+  /* Stats: full-width auto-fit row of all 8 cards across the top */
+  .play-stats {
+    max-width: none !important;
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: repeat(8, 1fr) !important;
+    gap: 8px !important;
+  }
+
+  /* Two columns: left game (1.4fr) + right sidebar (1fr, min 380) */
+  .play-cols {
+    display: grid;
+    grid-template-columns: 1.4fr minmax(380px, 1fr);
+    gap: 24px;
+    align-items: start;
+    width: 100%;
+  }
+
+  /* Left column — game; keep its children centered */
+  .play-grid-col {
+    align-items: center;
+    min-width: 0;
+  }
+
+  /* Scale the grid + its sibling controls UP to fill the left column */
+  .play-grid-col .play-grid-outer,
+  .play-grid-col .play-timer,
+  .play-grid-col .play-status,
+  .play-grid-col .play-dots {
+    max-width: 720px !important;
+  }
+
+  /* Right column — sidebar; align to top, fill its width */
+  .play-side-col {
+    align-items: stretch;
+    min-width: 0;
+  }
+  .play-side-col .play-history-card,
+  .play-side-col .play-feed-card {
+    max-width: none !important;
+    width: 100% !important;
+    margin-top: 0 !important;
+  }
+  .play-side-col .play-feed-card {
+    margin-top: 14px !important;
+    flex: 1 1 auto;
+  }
+
+  /* Round history grows taller to fill vertical space next to the grid */
+  .play-side-col .play-history-rows {
+    max-height: 520px;
+    overflow-y: auto;
+  }
+  .play-side-col .play-feed-rows {
+    max-height: 320px !important;
+  }
+  .play-side-col .play-history-rows::-webkit-scrollbar,
+  .play-side-col .play-feed-rows::-webkit-scrollbar { width: 4px; }
+  .play-side-col .play-history-rows::-webkit-scrollbar-thumb,
+  .play-side-col .play-feed-rows::-webkit-scrollbar-thumb { background: #2F3337; border-radius: 2px; }
+
+  /* Contract footer — full width below both columns */
+  .play-contract-card {
+    max-width: none !important;
+    width: 100% !important;
+  }
 }

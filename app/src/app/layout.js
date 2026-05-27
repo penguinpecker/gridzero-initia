@@ -13,11 +13,11 @@ export default function RootLayout({ children }) {
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=JetBrains+Mono:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body style={{ margin: 0, padding: 0, background: "#060606" }}>
+      <body style={{ margin: 0, padding: 0, background: "#0C0C0C" }}>
         <Providers>{children}</Providers>
       </body>
     </html>

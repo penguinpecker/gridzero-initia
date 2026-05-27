@@ -20,13 +20,13 @@ module gridzero::game {
     use std::string;
     use std::vector;
     use std::error;
-    use initia_std::block;
-    use initia_std::coin;
-    use initia_std::event;
-    use initia_std::keccak;
-    use initia_std::fungible_asset::{Metadata};
-    use initia_std::object::{Self, Object, ExtendRef};
-    use initia_std::table::{Self, Table};
+    use minitia_std::block;
+    use minitia_std::coin;
+    use minitia_std::event;
+    use minitia_std::keccak;
+    use minitia_std::fungible_asset::{Metadata};
+    use minitia_std::object::{Self, Object, ExtendRef};
+    use minitia_std::table::{Self, Table};
     use gridzero::zero_token;
 
     // ----- errors -----

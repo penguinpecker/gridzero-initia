@@ -5,6 +5,7 @@ import { useResolverSSE } from "./useResolverSSE";
 import {
   EXPLORER,
   GRIDZERO_ADDR,
+  CHAIN_ID,
   GAS_DENOM,
   getCurrentRound,
   getCellCounts,
@@ -12,12 +13,14 @@ import {
   hasJoined,
   getPlayerCell,
   getConfig,
+  getEscrowBalance,
   getInitBalance,
   getZeroBalance,
   buildPickCellMsg,
   buildWithdrawMsg,
   toRawUinit,
   isInitAddress,
+  getResolverHistory,
 } from "@/lib/initia";
 import {
   cacheRound,
@@ -55,6 +58,26 @@ const fmtEth = (v, d = 4) => {
   if (!v) return "0." + "0".repeat(d);
   return (Number(v) / 1e6).toFixed(d);
 };
+// INIT with 6 decimals (full precision display).
+const fmt6 = (v) => {
+  if (!v) return "0.000000";
+  return (Number(v) / 1e6).toFixed(6);
+};
+// Short tx-hash display, e.g. "a1b2…f9".
+const shortTx = (h) => {
+  if (!h) return "";
+  const s = String(h).replace(/^0x/, "");
+  return s.length <= 10 ? s : `${s.slice(0, 4)}…${s.slice(-2)}`;
+};
+
+// ─── Initia brand tokens ───
+// #0C0C0C canvas · gray ramp · #2B6BFF cyan signature accent
+// gold #F8C24F (Motherlode) · green #55F678 (win) · red #F85454 (loss)
+const CYAN = "#2B6BFF", CYAN_LT = "#5E90FF", CYAN_DK = "#173C99", CYAN_BG = "#0C1733";
+const GOLD = "#F8C24F", WIN = "#55F678", LOSS = "#F85454";
+const G0 = "#F5F5F5", G1 = "#EDEDED", G2 = "#A1A6AA", G3 = "#757C82", G4 = "#585F67";
+const HEAD = "'Archivo', sans-serif";
+const GRIDZERO_PKG = "init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc";
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
@@ -76,6 +99,7 @@ export default function TheGrid() {
   const [activePlayers, setActivePlayers] = useState(0);
   const [resolved, setResolved] = useState(false);
   const [winningCell, setWinningCell] = useState(-1);
+  const [currentIsBonus, setCurrentIsBonus] = useState(false);
   const [claimedCells, setClaimedCells] = useState(new Set());
   const [cellCounts, setCellCounts] = useState(new Array(TOTAL_CELLS).fill(0));
   const [playerCell, setPlayerCell] = useState(-1);
@@ -107,7 +131,10 @@ export default function TheGrid() {
   const walletDropdownRef = useRef(null);
   const [lastResult, setLastResult] = useState(null); // { roundId, cell, players, pot, txHash }
   const feeConfig = useRef({ feeBps: 500, resolverReward: 100000 }); // defaults, updated from chain
+  const [config, setConfig] = useState(null);   // full get_config() for LIVE STATS strip
+  const [escrow, setEscrow] = useState("0");      // escrow_balance() raw uinit
   const [roundHistory, setRoundHistory] = useState([]); // array of ALL loaded past results, newest first
+  const [roundTxMap, setRoundTxMap] = useState(() => new Map()); // roundId -> resolve_round txHash (from resolver /history + SSE)
   const [moneyFlow, setMoneyFlow] = useState(false);
   const [gridFlash, setGridFlash] = useState(false);
   const [historyPage, setHistoryPage] = useState(0); // current page (0 = newest)
@@ -139,11 +166,21 @@ export default function TheGrid() {
   const { connected: sseConnected } = useResolverSSE({
     url: RESOLVER_URL ? `${RESOLVER_URL.replace(/\/$/, "")}/events` : "",
     enabled: !!RESOLVER_URL,
-    onRoundResolved: () => {
+    onRoundResolved: (data) => {
       pollState();
+      // Merge the live resolve_round txHash into the round→tx map (best-effort).
+      if (data && data.roundId != null && data.txHash) {
+        setRoundTxMap((prev) => {
+          const next = new Map(prev);
+          next.set(Number(data.roundId), String(data.txHash));
+          return next;
+        });
+      }
       // Fetch TX hash immediately, ZKV hash after ~25s finality window
       setTimeout(refreshHistoryTop, 3000);
       setTimeout(refreshHistoryTop, 25000);
+      // Refresh the resolver /history map shortly after resolution.
+      setTimeout(() => { loadResolverTxMap(); }, 4000);
     },
     onCellPicked: (data) => {
       setCellCounts(prev => {
@@ -163,8 +200,18 @@ export default function TheGrid() {
           feeBps: cfg.protocolFeeBps,
           resolverReward: Number(cfg.resolverReward),
         };
+        setConfig(cfg);
       })
       .catch(() => {});
+  }, []);
+
+  // ─── Read escrow/treasury balance (gridzero::game::escrow_balance) ───
+  useEffect(() => {
+    let alive = true;
+    const load = () => getEscrowBalance().then((v) => { if (alive) setEscrow(v); }).catch(() => {});
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(iv); };
   }, []);
 
   // ─── Lock body scroll when mobile sidebar is open ───
@@ -279,8 +326,10 @@ export default function TheGrid() {
       // Winning cell (only meaningful when resolved)
       if (isResolved && rd && rd.winningCell >= 0 && rd.winningCell < TOTAL_CELLS) {
         setWinningCell(rd.winningCell);
+        setCurrentIsBonus(Boolean(rd.isBonus));
       } else if (!isResolved) {
         setWinningCell(-1);
+        setCurrentIsBonus(false);
       }
 
       // Process cell counts
@@ -359,7 +408,7 @@ export default function TheGrid() {
       try {
         const rd = await getRound(id);
         if (rd && rd.resolved && rd.totalPlayers > 0) {
-          cacheRound({ roundId: id, cell: rd.winningCell, players: rd.totalPlayers, pot: rd.totalDeposits });
+          cacheRound({ roundId: id, cell: rd.winningCell, players: rd.totalPlayers, pot: rd.totalDeposits, isBonus: rd.isBonus });
         }
       } catch {
         // flaky RPC — skip this round, keep going
@@ -401,6 +450,7 @@ export default function TheGrid() {
         cell: Number(r.cell),
         players: Number(r.players),
         pot: String(r.pot),
+        isBonus: Boolean(r.isBonus),
         resolved: true,
         txHash: null,
         zkverifyTxHash: null,
@@ -423,6 +473,28 @@ export default function TheGrid() {
       });
     }
   }, []);
+
+  // ─── Resolver history → round→tx map (TX links for both history tables) ───
+  // Primary source for the resolve_round tx hash that paid INIT + minted $ZERO.
+  const loadResolverTxMap = useCallback(async () => {
+    const records = await getResolverHistory(80);
+    if (!Array.isArray(records) || records.length === 0) return;
+    setRoundTxMap((prev) => {
+      const next = new Map(prev);
+      for (const rec of records) {
+        if (rec && rec.roundId != null && rec.txHash) {
+          next.set(Number(rec.roundId), String(rec.txHash));
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    loadResolverTxMap();
+    const iv = setInterval(loadResolverTxMap, 15000);
+    return () => clearInterval(iv);
+  }, [loadResolverTxMap]);
 
   // Load older pages on demand
   const loadOlderHistory = () => {
@@ -479,6 +551,7 @@ export default function TheGrid() {
           players: rd.totalPlayers,
           numWinners,
           cost: "1000000", // 1 INIT (6 dec)
+          pickTxHash: pick.pickTxHash || null, // player's own entry tx (PICK link)
         });
       }
       return results;
@@ -533,16 +606,18 @@ export default function TheGrid() {
           const cell = rd.winningCell;     // 0..24
           const pot = rd.totalDeposits;
           const isResolved = rd.resolved;
+          const isBonus = rd.isBonus;
           if (players > 0) {
             // Persist resolved rounds with players to LOCAL CACHE.
             if (isResolved) {
-              cacheRound({ roundId: prevRound, cell, players, pot });
+              cacheRound({ roundId: prevRound, cell, players, pot, isBonus });
             }
             const result = {
               roundId: prevRound,
               cell,
               players,
               pot,
+              isBonus,
               resolved: isResolved,
               txHash: resolverTxHash.current || null,
             };
@@ -603,13 +678,14 @@ export default function TheGrid() {
         cell: winningCell,
         players: activePlayers,
         pot: potSize,
+        isBonus: currentIsBonus,
         resolved: true,
         txHash: resolverTxHash.current || null,
       };
       setLastResult(result);
       // Persist the resolved current round to LOCAL CACHE.
       if (activePlayers > 0) {
-        cacheRound({ roundId: round, cell: winningCell, players: activePlayers, pot: potSize });
+        cacheRound({ roundId: round, cell: winningCell, players: activePlayers, pot: potSize, isBonus: currentIsBonus });
       }
       setMoneyFlow(true);
       setTimeout(() => setMoneyFlow(false), 2500);
@@ -638,11 +714,14 @@ export default function TheGrid() {
       addFeed(`◈ Claiming cell ${CELL_LABELS[cellIndex]}...`);
       const msg = buildPickCellMsg(address, cellIndex);
       // requestInitiaTx signs + broadcasts via the connected Initia wallet,
-      // returning the tx hash once included.
-      const txHash = await wallet.requestInitiaTx({ msgs: [msg] });
-      addFeed(`✓ Cell ${CELL_LABELS[cellIndex]} claimed! ${txHash.slice(0, 8)}…`);
-      // Persist this pick to LOCAL CACHE so user history survives reloads.
-      recordPick(address, round, cellIndex);
+      // returning the tx hash once included. The return may be a string or an
+      // object — normalize to a hash string for the PICK tx link.
+      const res = await wallet.requestInitiaTx({ msgs: [msg] });
+      const txHash = typeof res === "string" ? res : (res?.txHash || res?.transactionHash || res?.hash || "");
+      addFeed(`✓ Cell ${CELL_LABELS[cellIndex]} claimed! ${String(txHash).slice(0, 8)}…`);
+      // Persist this pick (with its entry tx hash) to LOCAL CACHE so user
+      // history + the PICK tx link survive reloads.
+      recordPick(address, round, cellIndex, txHash || null);
       setPlayerCell(cellIndex);
       setSelectedCell(null);
       pollState();
@@ -704,7 +783,7 @@ export default function TheGrid() {
   // ─── Derived UI State ───
   const actualDuration = (roundEnd > 0 && roundStart > 0) ? (roundEnd - roundStart) : ROUND_DURATION;
   const timerProgress = actualDuration > 0 ? smoothTime / actualDuration : 0;
-  const timerColor = smoothTime > 10 ? "#9a9a9a" : smoothTime > 5 ? "#cfcfcf" : "#ffffff";
+  const timerColor = smoothTime > 10 ? CYAN : smoothTime > 5 ? GOLD : LOSS;
 
   const getStatus = () => {
     if (!ready) return "INITIALIZING...";
@@ -750,9 +829,9 @@ export default function TheGrid() {
         ...S.scanOverlay,
         background: `linear-gradient(180deg,
           transparent ${scanLine - 2}%,
-          rgba(255,255,255,0.12) ${scanLine - 1}%,
-          rgba(255,255,255,0.35) ${scanLine}%,
-          rgba(255,255,255,0.12) ${scanLine + 1}%,
+          rgba(43,107,255,0.06) ${scanLine - 1}%,
+          rgba(43,107,255,0.16) ${scanLine}%,
+          rgba(43,107,255,0.06) ${scanLine + 1}%,
           transparent ${scanLine + 2}%)`,
       }} />
       <div style={S.crtLines} />
@@ -764,22 +843,22 @@ export default function TheGrid() {
           <LogoIcon size={22} />
           <span style={S.logo} className="grid-logo-text">GRID</span>
           <span style={S.logoSub} className="grid-logo-text">ZERO</span>
-          <div style={{width:5,height:5,borderRadius:"50%",background:"#cfcfcf",boxShadow:"0 0 6px #cfcfcf",animation:"pulse 2s ease-in-out infinite",marginLeft:3,flexShrink:0}}/>
+          <div style={{width:5,height:5,borderRadius:"50%",background:CYAN,boxShadow:`0 0 6px ${CYAN}`,animation:"pulse 2s ease-in-out infinite",marginLeft:3,flexShrink:0}}/>
         </div>
         {/* Center — nav, hidden on mobile */}
         <nav className="grid-header-nav" style={{display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
-          <button onClick={()=>window.location.href="/"} className="nav-btn-home" style={{background:"transparent",border:"none",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,color:"#5a5a5a",cursor:"pointer",letterSpacing:1.5,padding:"6px 10px",borderRadius:3,transition:"color 0.2s"}}>HOME</button>
-          <button className="nav-btn-play" style={{background:"transparent",border:"none",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,color:"#cfcfcf",cursor:"default",letterSpacing:1.5,padding:"6px 10px",borderRadius:3,animation:"navGlow 3s ease-in-out infinite"}}>PLAY</button>
+          <button onClick={()=>window.location.href="/"} className="nav-btn-home" style={{background:"transparent",border:"none",fontFamily:"'Archivo', sans-serif",fontSize:10,fontWeight:700,color:"#585F67",cursor:"pointer",letterSpacing:1.5,padding:"6px 10px",borderRadius:3,transition:"color 0.2s"}}>HOME</button>
+          <button className="nav-btn-play" style={{background:"transparent",border:"none",fontFamily:"'Archivo', sans-serif",fontSize:10,fontWeight:700,color:CYAN,cursor:"default",letterSpacing:1.5,padding:"6px 10px",borderRadius:3,animation:"navGlow 3s ease-in-out infinite"}}>PLAY</button>
         </nav>
         {/* Right — balances + wallet */}
         <div style={{...S.hRight, gap:6, justifyContent:"flex-end", flexShrink:0}}>
           {authenticated && (
             <>
               <span style={S.hStat} className="grid-header-stat">
-                ● {fmtEth(gridBalance, 2)} <b style={{ color: "#888888" }}>ZERO</b>
+                ● {fmtEth(gridBalance, 2)} <b style={{ color: "#757C82" }}>ZERO</b>
               </span>
               <span style={S.hStat} className="grid-header-stat">
-                ◆ {fmt(ethBalance, 2)} <b style={{ color: "#cfcfcf" }}>INIT</b>
+                ◆ {fmt(ethBalance, 2)} <b style={{ color: CYAN }}>INIT</b>
               </span>
             </>
           )}
@@ -789,9 +868,9 @@ export default function TheGrid() {
               display: "none", alignItems: "center", gap: 8,
               fontSize: 11, letterSpacing: 0.5,
             }}>
-              <span style={{ color: "#cfcfcf" }}>{fmt(ethBalance, 2)} <b>INIT</b></span>
-              <span style={{ color: "#5a5a5a" }}>|</span>
-              <span style={{ color: "#888888" }}>{fmtEth(gridBalance, 2)} <b>ZERO</b></span>
+              <span style={{ color: "#EDEDED" }}>{fmt(ethBalance, 2)} <b>INIT</b></span>
+              <span style={{ color: "#585F67" }}>|</span>
+              <span style={{ color: "#757C82" }}>{fmtEth(gridBalance, 2)} <b>ZERO</b></span>
             </span>
           )}
           {!authenticated ? (
@@ -808,10 +887,10 @@ export default function TheGrid() {
                 </span>
                 {/* Mobile: balances + short address */}
                 <span className="wallet-addr-mobile" style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "nowrap" }}>
-                  <span style={{ fontSize: 10, color: "#cfcfcf", fontWeight: 700 }}>{fmt(ethBalance, 2)}<span style={{ fontSize: 9, opacity: 0.7 }}> I</span></span>
-                  <span style={{ color: "#333333", fontSize: 9 }}>|</span>
-                  <span style={{ fontSize: 10, color: "#888888", fontWeight: 700 }}>{fmtEth(gridBalance, 0)}<span style={{ fontSize: 9, opacity: 0.7 }}> Z</span></span>
-                  <span style={{ color: "#333333", fontSize: 9 }}>·</span>
+                  <span style={{ fontSize: 10, color: "#EDEDED", fontWeight: 700 }}>{fmt(ethBalance, 2)}<span style={{ fontSize: 9, opacity: 0.7 }}> I</span></span>
+                  <span style={{ color: "#585F67", fontSize: 9 }}>|</span>
+                  <span style={{ fontSize: 10, color: "#757C82", fontWeight: 700 }}>{fmtEth(gridBalance, 0)}<span style={{ fontSize: 9, opacity: 0.7 }}> Z</span></span>
+                  <span style={{ color: "#585F67", fontSize: 9 }}>·</span>
                   <span style={{ fontSize: 9 }}>{address ? `${address.slice(0, 4)}…${address.slice(-3)}` : "W"}</span>
                 </span>
                 <span style={{ fontSize: 8, opacity: 0.6, transition: "transform 0.2s", transform: walletDropdown ? "rotate(180deg)" : "none" }}>▼</span>
@@ -820,7 +899,7 @@ export default function TheGrid() {
                 <div className="grid-wallet-dropdown" style={{
                   position: "absolute", top: "calc(100% + 6px)", right: 0,
                   width: 280, background: "#101010",
-                  border: "1px solid rgba(255,255,255,0.25)", borderRadius: 8,
+                  border: "1px solid #2F3337", borderRadius: 8,
                   overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
                   zIndex: 9999, animation: "dropIn 0.15s ease-out",
                 }}>
@@ -836,13 +915,13 @@ export default function TheGrid() {
                     <span style={S.dropdownIcon}>↗</span> Withdraw
                   </button>
                   <div style={S.dropdownDivider} />
-                  <button onClick={() => { logout(); setWalletDropdown(false); }} style={{ ...S.dropdownItem, color: "#8a8a8a" }}>
+                  <button onClick={() => { logout(); setWalletDropdown(false); }} style={{ ...S.dropdownItem, color: "#A1A6AA" }}>
                     <span style={S.dropdownIcon}>⏻</span> Logout
                   </button>
                   {/* User History inside dropdown */}
                   {userHistory.length > 0 && (
-                    <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px 4px" }}>
-                      <div style={{ fontSize: 9, letterSpacing: 2, color: "#cfcfcf", fontWeight: 700, marginBottom: 8 }}>YOUR HISTORY</div>
+                    <div style={{ borderTop: "1px solid #1B1C1D", padding: "10px 14px 4px" }}>
+                      <div style={{ fontSize: 9, letterSpacing: 2, color: CYAN, fontWeight: 700, marginBottom: 8 }}>YOUR HISTORY</div>
                       <div style={{ maxHeight: 200, overflowY: "auto" }}>
                         {userHistory.map((h, i) => {
                           const isWin = h.won;
@@ -851,20 +930,44 @@ export default function TheGrid() {
                           const distributable = Math.max(potRaw - Math.floor(potRaw * fb / 10000) - rr, 0);
                           const perWinner = distributable / (h.numWinners || 1);
                           const displayAmt = isWin ? (perWinner / 1e6) : 1;
+                          const pickTx = h.pickTxHash || null;
+                          const payoutTx = isWin ? (roundTxMap.get(Number(h.roundId)) || null) : null;
                           return (
                             <div key={h.roundId} style={{
-                              display: "grid", gridTemplateColumns: "36px 58px 26px 1fr",
-                              alignItems: "center", padding: "5px 0", gap: 6,
-                              borderBottom: i < userHistory.length - 1 ? "1px solid rgba(255,255,255,0.03)" : "none",
+                              display: "grid", gridTemplateColumns: "34px 40px 22px 1fr 46px 46px",
+                              alignItems: "center", padding: "5px 0", gap: 5,
+                              borderBottom: i < userHistory.length - 1 ? "1px solid #161616" : "none",
                               fontSize: 11,
                             }}>
-                              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: 1, padding: "2px 4px", borderRadius: 3, textAlign: "center", background: isWin ? "rgba(208,208,208,0.12)" : "rgba(255,255,255,0.1)", color: isWin ? "#d0d0d0" : "#8a8a8a" }}>
+                              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: 1, padding: "2px 4px", borderRadius: 3, textAlign: "center", background: isWin ? "rgba(85,246,120,0.12)" : "#1B1C1D", color: isWin ? WIN : G3 }}>
                                 {isWin ? "WON" : "LOST"}
                               </span>
-                              <span style={{ color: "#7a7a7a", fontSize: 10 }}>R#{h.roundId}</span>
-                              <span style={{ color: "#5a5a5a", fontSize: 10 }}>{CELL_LABELS[h.cell] || "?"}</span>
-                              <span style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 10, fontWeight: 600, color: isWin ? "#d0d0d0" : "#8a8a8a", textAlign: "right" }}>
+                              <span style={{ color: "#757C82", fontSize: 10 }}>R#{h.roundId}</span>
+                              <span style={{ color: "#585F67", fontSize: 10 }}>{CELL_LABELS[h.cell] || "?"}</span>
+                              <span style={{ fontFamily: "'Archivo', sans-serif", fontSize: 10, fontWeight: 700, color: isWin ? WIN : G3, textAlign: "right" }}>
                                 {isWin ? "+" : "-"}{displayAmt.toFixed(2)} INIT
+                              </span>
+                              <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
+                                {pickTx ? (
+                                  <a href={`${EXPLORER}/tx/${pickTx}`} target="_blank" rel="noopener noreferrer"
+                                    title="Your entry (pick) tx"
+                                    style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
+                                    {shortTx(pickTx)} ↗
+                                  </a>
+                                ) : (
+                                  <span style={{ color: "#585F67" }}>—</span>
+                                )}
+                              </span>
+                              <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
+                                {payoutTx ? (
+                                  <a href={`${EXPLORER}/tx/${payoutTx}`} target="_blank" rel="noopener noreferrer"
+                                    title="Payout + $ZERO mint tx"
+                                    style={{ color: WIN, textDecoration: "none", whiteSpace: "nowrap" }}>
+                                    {shortTx(payoutTx)} ↗
+                                  </a>
+                                ) : (
+                                  <span style={{ color: "#585F67" }}>—</span>
+                                )}
                               </span>
                             </div>
                           );
@@ -883,7 +986,7 @@ export default function TheGrid() {
                               setUserHistoryLoading(false);
                             });
                           }}
-                          style={{ width: "100%", padding: "7px 0", marginTop: 6, background: "none", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 4, color: "#cfcfcf", fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, letterSpacing: 1, cursor: "pointer" }}
+                          style={{ width: "100%", padding: "7px 0", marginTop: 6, background: CYAN_BG, border: `1px solid ${CYAN}55`, borderRadius: 4, color: CYAN, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, letterSpacing: 1, cursor: "pointer" }}
                         >
                           {userHistoryLoading ? "SCANNING..." : "LOAD MORE"}
                         </button>
@@ -891,7 +994,7 @@ export default function TheGrid() {
                     </div>
                   )}
                   {!authenticated && userHistory.length === 0 && userHistoryLoading && (
-                    <div style={{ padding: "8px 14px", fontSize: 10, color: "#5a5a5a" }}>Scanning rounds...</div>
+                    <div style={{ padding: "8px 14px", fontSize: 10, color: "#585F67" }}>Scanning rounds...</div>
                   )}
                 </div>
               )}
@@ -899,32 +1002,32 @@ export default function TheGrid() {
                 <div className="grid-wallet-dropdown" style={{
                   position: "absolute", top: "calc(100% + 6px)", right: 0,
                   width: 300, background: "#101010",
-                  border: "1px solid rgba(255,255,255,0.25)", borderRadius: 8,
+                  border: "1px solid #2F3337", borderRadius: 8,
                   overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
                   zIndex: 9999, animation: "dropIn 0.15s ease-out",
                 }}>
                   <div style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.12)",
-                    background: "rgba(255,255,255,0.04)",
+                    padding: "12px 14px", borderBottom: "1px solid #1B1C1D",
+                    background: "#0C0C0C",
                   }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: "#cfcfcf", letterSpacing: 1.5 }}>↗ WITHDRAW INIT</span>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: CYAN, letterSpacing: 1.5, fontFamily: HEAD }}>↗ WITHDRAW INIT</span>
                     <button onClick={() => { setWalletView("menu"); setWithdrawError(""); setWithdrawSuccess(""); }} style={{
-                      fontSize: 10, color: "#7a7a7a", cursor: "pointer", background: "none",
-                      border: "1px solid rgba(255,255,255,0.1)", padding: "4px 10px", borderRadius: 4,
+                      fontSize: 10, color: "#757C82", cursor: "pointer", background: "none",
+                      border: "1px solid #1B1C1D", padding: "4px 10px", borderRadius: 4,
                       fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5,
                     }}>◀ BACK</button>
                   </div>
                   <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, padding: "0 2px" }}>
-                      <span style={{ color: "#5a5a5a" }}>Available</span>
-                      <span style={{ color: "#cfcfcf", fontWeight: 600, cursor: "pointer" }} onClick={() => setWithdrawAmt(fmt(ethBalance, 6))}>{fmt(ethBalance)} INIT (MAX)</span>
+                      <span style={{ color: "#585F67" }}>Available</span>
+                      <span style={{ color: "#EDEDED", fontWeight: 600, cursor: "pointer" }} onClick={() => setWithdrawAmt(fmt(ethBalance, 6))}>{fmt(ethBalance)} INIT (MAX)</span>
                     </div>
                     <input
                       placeholder="Destination address (init1...)"
                       value={withdrawAddr}
                       onChange={(e) => { setWithdrawAddr(e.target.value); setWithdrawError(""); setWithdrawSuccess(""); }}
-                      style={{ ...S.dropdownInput, borderColor: withdrawError ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)" }}
+                      style={{ ...S.dropdownInput, borderColor: withdrawError ? "#F85454" : "#2F3337" }}
                     />
                     <input
                       placeholder="Amount in INIT"
@@ -933,12 +1036,12 @@ export default function TheGrid() {
                       style={S.dropdownInput}
                     />
                     {withdrawError && (
-                      <div style={{ fontSize: 10, color: "#8a8a8a", padding: "4px 2px", lineHeight: 1.4 }}>
+                      <div style={{ fontSize: 10, color: "#A1A6AA", padding: "4px 2px", lineHeight: 1.4 }}>
                         △ {withdrawError}
                       </div>
                     )}
                     {withdrawSuccess && (
-                      <div style={{ fontSize: 10, color: "#d0d0d0", padding: "4px 2px", lineHeight: 1.4, fontWeight: 600 }}>
+                      <div style={{ fontSize: 10, color: "#EDEDED", padding: "4px 2px", lineHeight: 1.4, fontWeight: 600 }}>
                         {withdrawSuccess}
                       </div>
                     )}
@@ -951,7 +1054,7 @@ export default function TheGrid() {
                         {withdrawing ? "SENDING..." : "SEND"}
                       </button>
                       <button
-                        style={{ ...S.claimBtn, fontSize: 11, padding: "10px 16px", borderColor: "#5a5a5a", color: "#7a7a7a", background: "none" }}
+                        style={{ ...S.claimBtn, fontSize: 11, padding: "10px 16px", borderColor: "#585F67", color: "#757C82", background: "none" }}
                         onClick={() => { setWalletDropdown(false); setWalletView("menu"); setWithdrawAddr(""); setWithdrawAmt(""); setWithdrawError(""); setWithdrawSuccess(""); }}
                       >
                         CANCEL
@@ -971,8 +1074,74 @@ export default function TheGrid() {
 
         {/* ─── GRID AREA ─── */}
         <div style={S.gridArea} className="grid-game-area">
+
+         {/* ─── PLAY SHELL — full-width responsive container ─── */}
+         <div className="play-shell">
+
+          {/* ─── LIVE STATS strip (real on-chain data) ─── */}
+          {(() => {
+            const c = config;
+            const feePct = c ? (c.protocolFeeBps / 100) : 5;
+            const entryInit = c ? (Number(c.entryFee) / 1e6) : 1;
+            const odds = c ? c.bonusRoundOdds : 100;
+            const mult = c ? c.bonusMultiplier : 10;
+            const zeroPer = c ? (Number(c.zeroPerRound) / 1e6) : 100;
+            const mlZero = c ? (Number(c.motherlodePerRound) / 1e6) : 1000;
+            const timeLeft = Math.max(0, Math.floor(smoothTime));
+            return (
+              <div style={S.statsWrap} className="play-stats">
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Round</div>
+                  <div style={{ ...S.statValue, color: CYAN }}>{round > 0 ? `#${round}` : "—"}</div>
+                  {currentIsBonus && !resolved && <div style={{ ...S.statSub, color: GOLD }}>★ MOTHERLODE</div>}
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Pot</div>
+                  <div style={{ ...S.statValue, color: CYAN }}>{fmt(potSize)}</div>
+                  <div style={S.statSub}>INIT</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Players</div>
+                  <div style={S.statValue}>{activePlayers}</div>
+                  <div style={S.statSub}>this round</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Time Left</div>
+                  <div style={{ ...S.statValue, color: timerColor }}>{resolved ? "0" : timeLeft}<span style={{ fontSize: 10, color: G3 }}>s</span></div>
+                  <div style={S.statSub}>60s rounds</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Entry Fee</div>
+                  <div style={S.statValue}>{entryInit}<span style={{ fontSize: 10, color: G3 }}> INIT</span></div>
+                  <div style={S.statSub}>{feePct}% protocol fee</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Motherlode</div>
+                  <div style={{ ...S.statValue, color: GOLD }}>1-in-{odds}</div>
+                  <div style={S.statSub}>{mult}× payout</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>$ZERO / Round</div>
+                  <div style={S.statValue}>{zeroPer}</div>
+                  <div style={S.statSub}>ML {mlZero} $ZERO</div>
+                </div>
+                <div style={S.statCard}>
+                  <div style={S.statLabel}>Treasury</div>
+                  <div style={{ ...S.statValue, color: CYAN_LT }}>{fmt(escrow)}</div>
+                  <div style={S.statSub}>escrow INIT</div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ─── TWO-COLUMN ROW (desktop) / stacked (mobile) ─── */}
+          <div className="play-cols">
+
+           {/* ─── LEFT: GAME COLUMN ─── */}
+           <div className="play-grid-col">
+
           {/* Timer */}
-          <div style={S.timerWrap}>
+          <div style={S.timerWrap} className="play-timer">
             <div style={S.timerBarBg}>
               <div style={{
                 ...S.timerBarFill,
@@ -990,7 +1159,7 @@ export default function TheGrid() {
           </div>
 
           {/* Grid */}
-          <div style={S.gridOuter}>
+          <div style={S.gridOuter} className="play-grid-outer">
             <div style={S.cornerTL} /><div style={S.cornerTR} />
             <div style={S.cornerBL} /><div style={S.cornerBR} />
 
@@ -1013,10 +1182,10 @@ export default function TheGrid() {
                 animation: "fadeIn 0.15s ease-out",
               }}>
                 <div style={{ position: "relative", width: 56, height: 56 }}>
-                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#888888", borderRightColor: "#888888", animation: "spin 0.9s linear infinite" }} />
-                  <div style={{ position: "absolute", inset: 7, borderRadius: "50%", border: "2px solid transparent", borderBottomColor: "#cfcfcf", borderLeftColor: "#cfcfcf", animation: "spinR 0.65s linear infinite" }} />
-                  <div style={{ position: "absolute", inset: 14, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#d0d0d0", animation: "spin 1.3s linear infinite" }} />
-                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "#cfcfcf", animation: "pulse 1.2s ease-in-out infinite" }}>⬡</div>
+                  <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#2B6BFF", borderRightColor: "#2B6BFF", animation: "spin 0.9s linear infinite" }} />
+                  <div style={{ position: "absolute", inset: 7, borderRadius: "50%", border: "2px solid transparent", borderBottomColor: CYAN_DK, borderLeftColor: CYAN_DK, animation: "spinR 0.65s linear infinite" }} />
+                  <div style={{ position: "absolute", inset: 14, borderRadius: "50%", border: "2px solid transparent", borderTopColor: CYAN_LT, animation: "spin 1.3s linear infinite" }} />
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: CYAN, animation: "pulse 1.2s ease-in-out infinite" }}>⬡</div>
                 </div>
               </div>
             )}
@@ -1078,17 +1247,17 @@ export default function TheGrid() {
           </div>
 
           {/* Status */}
-          <div style={S.statusBar}>
+          <div style={S.statusBar} className="play-status">
             <span style={{ fontWeight: 600 }}>{getStatus()}</span>
-            <span style={{ color: "#8a8a8a" }}>{activePlayers} PLAYERS</span>
+            <span style={{ color: "#A1A6AA" }}>{activePlayers} PLAYERS</span>
           </div>
 
           {/* Player dots */}
-          <div style={S.dots}>
+          <div style={S.dots} className="play-dots">
             {Array.from({ length: TOTAL_CELLS }).map((_, i) => (
               <div key={i} style={{
                 ...S.progressDot,
-                backgroundColor: i < activePlayers ? "#888888" : "rgba(255,255,255,0.1)",
+                backgroundColor: i < activePlayers ? "#2B6BFF" : "#242629",
               }} />
             ))}
           </div>
@@ -1100,7 +1269,7 @@ export default function TheGrid() {
             <div style={{
               width: "100%", maxWidth: 620, textAlign: "center",
               padding: "8px 12px", marginTop: 6,
-              fontSize: 10, letterSpacing: 1.5, color: "#5a5a5a",
+              fontSize: 10, letterSpacing: 1.5, color: "#585F67",
               fontFamily: "'JetBrains Mono', monospace",
             }}>
               ◆ TAP TO SELECT · DOUBLE-TAP TO CLAIM ◆
@@ -1122,33 +1291,32 @@ export default function TheGrid() {
             <div className="grid-mobile-user-history" style={{
               width: "100%", maxWidth: 520, marginTop: 14,
               borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.2)",
-              background: "rgba(255,255,255,0.03)",
+              border: "1px solid #242629",
+              background: "#101010",
               overflow: "hidden",
             }}>
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "10px 16px",
-                borderBottom: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.04)",
+                borderBottom: "1px solid #1B1C1D",
+                background: "#0C0C0C",
               }}>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#a8a8a8" }}>YOUR HISTORY</span>
-                <span style={{ fontSize: 10, color: "#6a6a6a", letterSpacing: 1 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: CYAN, fontFamily: HEAD }}>YOUR HISTORY</span>
+                <span style={{ fontSize: 10, color: "#757C82", letterSpacing: 1 }}>
                   {userHistoryLoading ? "SCANNING..." : `${userHistory.length} ROUNDS`}
                 </span>
               </div>
               <div style={{
-                display: "grid", gridTemplateColumns: "38px 64px 30px 44px 28px 52px 1fr",
+                display: "grid", gridTemplateColumns: "38px 50px 28px 1fr 50px 50px",
                 padding: "8px 16px 4px", gap: 4,
-                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                borderBottom: "1px solid #1B1C1D",
               }}>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700 }}>RES</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700 }}>ROUND</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700 }}>CELL</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>POT</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>PLYR</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>ZERO</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>P&L</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700 }}>RES</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700 }}>ROUND</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700 }}>CELL</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>P&L</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>PICK</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>PAYOUT</span>
               </div>
               <div className="grid-user-history-scroll" style={{ maxHeight: 240, overflowY: "auto" }}>
                 {userHistory.map((h, i) => {
@@ -1158,39 +1326,52 @@ export default function TheGrid() {
                   const distributable = Math.max(potRaw - Math.floor(potRaw * feeBps / 10000) - resolverReward, 0);
                   const perWinner = distributable / (h.numWinners || 1);
                   const displayAmt = isWin ? (perWinner / 1e6) : 1;
+                  const pickTx = h.pickTxHash || null;
+                  const payoutTx = isWin ? (roundTxMap.get(Number(h.roundId)) || null) : null;
                   return (
                     <div key={h.roundId} style={{
-                      display: "grid", gridTemplateColumns: "38px 64px 30px 44px 28px 52px 1fr",
+                      display: "grid", gridTemplateColumns: "38px 50px 28px 1fr 50px 50px",
+                      alignItems: "center",
                       padding: "7px 16px", gap: 4,
-                      borderBottom: "1px solid rgba(255,255,255,0.03)",
+                      borderBottom: "1px solid #161616",
                     }}>
                       <span style={{
                         fontSize: 9, fontWeight: 700, letterSpacing: 1,
                         padding: "2px 0", borderRadius: 3, textAlign: "center",
-                        background: isWin ? "rgba(208,208,208,0.12)" : "rgba(255,255,255,0.1)",
-                        color: isWin ? "#d0d0d0" : "#8a8a8a",
+                        background: isWin ? "rgba(85,246,120,0.12)" : "#1B1C1D",
+                        color: isWin ? WIN : G3,
                       }}>
                         {isWin ? "WON" : "LOST"}
                       </span>
-                      <span style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 11, fontWeight: 600, color: "#d8d8d8" }}>#{h.roundId}</span>
-                      <span style={{ fontSize: 11, color: "#a8a8a8" }}>{CELL_LABELS[h.cell] || "?"}</span>
-                      <span style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 10, color: "#cfcfcf", fontWeight: 600, textAlign: "right" }}>
-                        {h.pot ? fmt(h.pot) : "—"}
-                      </span>
-                      <span style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 10, color: "#8a8a8a", textAlign: "right" }}>
-                        {h.players || "—"}
-                      </span>
+                      <span style={{ fontFamily: "'Archivo', sans-serif", fontSize: 11, fontWeight: 700, color: "#EDEDED" }}>#{h.roundId}</span>
+                      <span style={{ fontSize: 11, color: "#A1A6AA" }}>{CELL_LABELS[h.cell] || "?"}</span>
                       <span style={{
-                        fontFamily: "'Orbitron', sans-serif", fontSize: 10, fontWeight: 600,
-                        color: isWin ? "#888888" : "#333333", textAlign: "right",
-                      }}>
-                        {isWin ? "+100 Z" : "—"}
-                      </span>
-                      <span style={{
-                        fontFamily: "'Orbitron', sans-serif", fontSize: 10, fontWeight: 600,
-                        color: isWin ? "#d0d0d0" : "#8a8a8a", textAlign: "right", whiteSpace: "nowrap",
+                        fontFamily: "'Archivo', sans-serif", fontSize: 10, fontWeight: 700,
+                        color: isWin ? WIN : G3, textAlign: "right", whiteSpace: "nowrap",
                       }}>
                         {isWin ? "+" : "-"}{displayAmt.toFixed(2)} INIT
+                      </span>
+                      <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {pickTx ? (
+                          <a href={`${EXPLORER}/tx/${pickTx}`} target="_blank" rel="noopener noreferrer"
+                            title="Your entry (pick) tx"
+                            style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
+                            {shortTx(pickTx)} ↗
+                          </a>
+                        ) : (
+                          <span style={{ color: "#585F67" }}>—</span>
+                        )}
+                      </span>
+                      <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {payoutTx ? (
+                          <a href={`${EXPLORER}/tx/${payoutTx}`} target="_blank" rel="noopener noreferrer"
+                            title="Payout + $ZERO mint tx"
+                            style={{ color: WIN, textDecoration: "none", whiteSpace: "nowrap" }}>
+                            {shortTx(payoutTx)} ↗
+                          </a>
+                        ) : (
+                          <span style={{ color: "#585F67" }}>—</span>
+                        )}
                       </span>
                     </div>
                   );
@@ -1199,8 +1380,8 @@ export default function TheGrid() {
               {userHistory.length > 0 && userHistoryOffset.current < userHistoryTotal.current && (
                 <div style={{
                   padding: "8px 16px", textAlign: "center",
-                  borderTop: "1px solid rgba(255,255,255,0.1)",
-                  background: "rgba(255,255,255,0.02)",
+                  borderTop: "1px solid #1B1C1D",
+                  background: "#0C0C0C",
                 }}>
                   <button
                     onClick={() => {
@@ -1216,8 +1397,8 @@ export default function TheGrid() {
                     }}
                     style={{
                       width: "100%", padding: "6px 0",
-                      background: "none", border: "1px solid rgba(255,255,255,0.15)",
-                      borderRadius: 4, color: "#cfcfcf", fontSize: 10,
+                      background: CYAN_BG, border: `1px solid ${CYAN}55`,
+                      borderRadius: 4, color: CYAN, fontSize: 10,
                       fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
                       letterSpacing: 1, cursor: "pointer",
                     }}
@@ -1229,6 +1410,11 @@ export default function TheGrid() {
             </div>
           )}
 
+           </div>{/* ─── /LEFT GAME COLUMN ─── */}
+
+           {/* ─── RIGHT: SIDEBAR COLUMN (round history + live feed) ─── */}
+           <div className="play-side-col">
+
           {/* ─── ROUND HISTORY TABLE (paginated) ─── */}
           {(() => {
             const totalPages = Math.ceil(roundHistory.length / HISTORY_PAGE_SIZE) || 1;
@@ -1237,11 +1423,11 @@ export default function TheGrid() {
             const hasOlder = roundHistory.length > 0 && (historyPage < totalPages - 1 || !historyFullyLoaded);
             const hasNewer = historyPage > 0;
             return (
-            <div style={{
+            <div className="play-history-card" style={{
               width: "100%", maxWidth: 520, marginTop: 14,
               borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.2)",
-              background: "rgba(255,255,255,0.03)",
+              border: "1px solid #242629",
+              background: "#101010",
               overflow: "hidden",
               animation: "winnerBannerIn 0.5s ease-out",
             }}>
@@ -1249,58 +1435,81 @@ export default function TheGrid() {
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "10px 16px",
-                borderBottom: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.04)",
+                borderBottom: "1px solid #1B1C1D",
+                background: "#0C0C0C",
               }}>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#a8a8a8" }}>ROUND HISTORY</span>
-                <span style={{ fontSize: 10, color: "#6a6a6a", letterSpacing: 1 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: G1, fontFamily: HEAD }}>ROUND HISTORY</span>
+                <span style={{ fontSize: 10, color: "#757C82", letterSpacing: 1 }}>
                   {historyLoading ? "SCANNING..." : `${roundHistory.length} ROUNDS${historyFullyLoaded ? "" : "+"} · PAGE ${historyPage + 1}`}
                 </span>
               </div>
               {/* Column headers */}
               <div style={{
-                display: "grid", gridTemplateColumns: "62px 1fr 1fr",
+                display: "grid", gridTemplateColumns: "52px 1fr 48px 1fr 58px",
                 padding: "8px 16px 4px", gap: 4,
-                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                borderBottom: "1px solid #1B1C1D",
               }}>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700 }}>ROUND</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700 }}>WINNER</span>
-                <span style={{ fontSize: 9, color: "#5a5a5a", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>POT</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700 }}>ROUND</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700 }}>WINNER</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>PLAYERS</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>POT</span>
+                <span style={{ fontSize: 9, color: "#585F67", letterSpacing: 1.5, fontWeight: 700, textAlign: "right" }}>TX</span>
               </div>
               {/* Rows */}
-              <div>
+              <div className="play-history-rows">
                 {pageRows.length === 0 && (
-                  <div style={{ padding: "20px 16px", textAlign: "center", color: "#6a6a6a", fontSize: 11, letterSpacing: 1 }}>
+                  <div style={{ padding: "20px 16px", textAlign: "center", color: "#757C82", fontSize: 11, letterSpacing: 1 }}>
                     {historyLoading ? "⟐ SCANNING ROUNDS..." : "NO ROUNDS WITH PLAYERS FOUND"}
                   </div>
                 )}
                 {pageRows.map((r, i) => {
                   const globalIdx = pageStart + i;
                   const isLatest = globalIdx === 0 && moneyFlow;
+                  const isBonus = !!r.isBonus;
+                  const txHash = roundTxMap.get(Number(r.roundId)) || null;
                   return (
                     <div key={r.roundId} style={{
-                      display: "grid", gridTemplateColumns: "62px 1fr 1fr",
+                      display: "grid", gridTemplateColumns: "52px 1fr 48px 1fr 58px",
+                      alignItems: "center",
                       padding: "7px 16px", gap: 4,
-                      borderBottom: "1px solid rgba(255,255,255,0.03)",
-                      background: isLatest ? "rgba(255,255,255,0.06)" : "transparent",
+                      borderBottom: "1px solid #1B1C1D",
+                      background: isLatest ? CYAN_BG : isBonus ? "rgba(248,194,79,0.05)" : "transparent",
                       transition: "background 0.5s ease",
                       animation: globalIdx === 0 ? "winnerBannerIn 0.4s ease-out" : "none",
                     }}>
                       <span style={{
-                        fontFamily: "'Orbitron', sans-serif", fontSize: 11, fontWeight: 600,
-                        color: isLatest ? "#ffffff" : "#d8d8d8",
+                        fontFamily: "'Archivo', sans-serif", fontSize: 11, fontWeight: 700,
+                        color: isLatest ? CYAN : "#EDEDED",
                       }}>#{r.roundId}</span>
                       <span style={{
-                        fontSize: 12, fontWeight: 700,
-                        color: r.resolved === false ? "#8a8a8a" : "#ffffff", letterSpacing: 0.5,
+                        fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 4,
+                        color: r.resolved === false ? "#A1A6AA" : (isBonus ? GOLD : CYAN), letterSpacing: 0.5,
                       }}>
-                        {r.resolved === false ? "⏳" : (CELL_LABELS[r.cell] || "?")} {globalIdx === 0 && r.resolved !== false ? "★" : ""}
+                        {r.resolved === false ? "⏳" : (CELL_LABELS[r.cell] || "?")}
+                        {isBonus && r.resolved !== false && (
+                          <span title="Motherlode round" style={{ fontSize: 10, color: GOLD }}>★ BONUS</span>
+                        )}
                       </span>
                       <span style={{
-                        fontFamily: "'Orbitron', sans-serif", fontSize: 11, fontWeight: 600,
-                        color: isLatest ? "#ffffff" : "#cfcfcf",
+                        fontFamily: "'Archivo', sans-serif", fontSize: 11, fontWeight: 600,
+                        color: "#A1A6AA", textAlign: "right",
+                      }}>{r.players ?? "—"}</span>
+                      <span style={{
+                        fontFamily: "'Archivo', sans-serif", fontSize: 11, fontWeight: 700,
+                        color: isLatest ? CYAN : "#EDEDED", textAlign: "right",
                         animation: isLatest ? "pulse 1s ease-in-out infinite" : "none",
                       }}>{fmt(r.pot)}</span>
+                      <span style={{ textAlign: "right", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {txHash ? (
+                          <a href={`${EXPLORER}/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+                            title="Payout + $ZERO mint tx"
+                            style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
+                            {shortTx(txHash)} ↗
+                          </a>
+                        ) : (
+                          <span style={{ color: "#585F67" }}>—</span>
+                        )}
+                      </span>
                     </div>
                   );
                 })}
@@ -1309,22 +1518,22 @@ export default function TheGrid() {
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "8px 16px",
-                borderTop: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.02)",
+                borderTop: "1px solid #1B1C1D",
+                background: "#0C0C0C",
               }}>
                 <button
                   onClick={() => setHistoryPage(p => Math.max(0, p - 1))}
                   disabled={!hasNewer}
                   style={{
-                    background: hasNewer ? "rgba(255,255,255,0.12)" : "transparent",
-                    border: hasNewer ? "1px solid rgba(255,255,255,0.3)" : "1px solid rgba(255,255,255,0.06)",
-                    color: hasNewer ? "#cfcfcf" : "#444444",
+                    background: hasNewer ? "#0C1733" : "transparent",
+                    border: hasNewer ? "1px solid #2B6BFF55" : "1px solid #1B1C1D",
+                    color: hasNewer ? CYAN : "#585F67",
                     padding: "4px 14px", borderRadius: 6, fontSize: 10, fontWeight: 700,
                     letterSpacing: 1.5, cursor: hasNewer ? "pointer" : "default",
                     fontFamily: "'JetBrains Mono', monospace",
                   }}
                 >◀ NEWER</button>
-                <span style={{ fontSize: 10, color: "#6a6a6a", letterSpacing: 1 }}>
+                <span style={{ fontSize: 10, color: "#757C82", letterSpacing: 1 }}>
                   {pageStart + 1}–{Math.min(pageStart + HISTORY_PAGE_SIZE, roundHistory.length)} of {roundHistory.length}{historyFullyLoaded ? "" : "+"}
                 </span>
                 <button
@@ -1339,9 +1548,9 @@ export default function TheGrid() {
                   }}
                   disabled={!hasOlder || historyLoading}
                   style={{
-                    background: hasOlder ? "rgba(255,255,255,0.12)" : "transparent",
-                    border: hasOlder ? "1px solid rgba(255,255,255,0.3)" : "1px solid rgba(255,255,255,0.06)",
-                    color: hasOlder ? "#cfcfcf" : "#444444",
+                    background: hasOlder ? "#0C1733" : "transparent",
+                    border: hasOlder ? "1px solid #2B6BFF55" : "1px solid #1B1C1D",
+                    color: hasOlder ? CYAN : "#585F67",
                     padding: "4px 14px", borderRadius: 6, fontSize: 10, fontWeight: 700,
                     letterSpacing: 1.5, cursor: hasOlder ? "pointer" : "default",
                     fontFamily: "'JetBrains Mono', monospace",
@@ -1351,6 +1560,69 @@ export default function TheGrid() {
             </div>
             );
           })()}
+
+          {/* ─── LIVE ACTIVITY FEED (real session events) ─── */}
+          <div className="play-feed-card" style={{
+            width: "100%", maxWidth: 520, marginTop: 14,
+            borderRadius: 10, border: "1px solid #242629", background: "#101010", overflow: "hidden",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "10px 16px", borderBottom: "1px solid #1B1C1D", background: "#0C0C0C",
+            }}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: G1, fontFamily: HEAD }}>LIVE FEED</span>
+              <span style={S.liveTag}>● LIVE</span>
+            </div>
+            <div className="play-feed-rows" style={{ padding: "8px 16px", maxHeight: 240, overflowY: "auto" }}>
+              {feed.length === 0 ? (
+                <div style={S.feedEmpty}>Waiting for activity…</div>
+              ) : (
+                feed.map((f, i) => (
+                  <div key={f.time + "-" + i} style={S.feedItem}>
+                    <span style={S.feedTime}>{new Date(f.time).toLocaleTimeString([], { hour12: false })}</span>
+                    <span style={{ color: G2 }}>{f.msg}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+           </div>{/* ─── /RIGHT SIDEBAR COLUMN ─── */}
+
+          </div>{/* ─── /TWO-COLUMN ROW ─── */}
+
+          {/* ─── CONTRACT / ON-CHAIN INFO (full width) ─── */}
+          <div className="play-contract-card" style={{
+            width: "100%", maxWidth: 520, marginTop: 14,
+            borderRadius: 10, border: "1px solid #242629", background: "#101010", overflow: "hidden",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "10px 16px", borderBottom: "1px solid #1B1C1D", background: "#0C0C0C",
+            }}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: G1, fontFamily: HEAD }}>CONTRACT</span>
+              <span style={{ fontSize: 10, color: CYAN, letterSpacing: 1 }}>● {CHAIN_ID}</span>
+            </div>
+            <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 9, letterSpacing: 1.5, color: "#585F67", fontWeight: 700, flexShrink: 0 }}>GRIDZERO PKG</span>
+                <a href={`https://scan.initia.xyz/${CHAIN_ID}/account/${GRIDZERO_PKG}`} target="_blank" rel="noopener noreferrer"
+                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: CYAN, textDecoration: "none", wordBreak: "break-all", textAlign: "right" }}>
+                  {`${GRIDZERO_PKG.slice(0, 12)}…${GRIDZERO_PKG.slice(-8)}`} ↗
+                </a>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 9, letterSpacing: 1.5, color: "#585F67", fontWeight: 700 }}>$ZERO ASSET</span>
+                <span style={{ fontSize: 10, color: "#A1A6AA", textAlign: "right" }}>Native FA · 6 decimals</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 9, letterSpacing: 1.5, color: "#585F67", fontWeight: 700 }}>ENTRY · VRF</span>
+                <span style={{ fontSize: 10, color: "#A1A6AA", textAlign: "right" }}>Native INIT · keccak-derived VRF</span>
+              </div>
+            </div>
+          </div>
+
+         </div>{/* ─── /PLAY SHELL ─── */}
         </div>
 
       </div>
@@ -1359,8 +1631,8 @@ export default function TheGrid() {
       {round === 0 && (
         <div style={{
           width: "100%", maxWidth: 900, padding: "10px 16px", margin: "8px auto",
-          background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.3)",
-          borderRadius: 8, fontSize: 11, color: "#8a8a8a", fontFamily: "'JetBrains Mono', monospace",
+          background: "rgba(248,84,84,0.08)", border: "1px solid rgba(248,84,84,0.35)",
+          borderRadius: 8, fontSize: 11, color: "#A1A6AA", fontFamily: "'JetBrains Mono', monospace",
         }}>
           <b>△ DEBUG:</b> Round = 0 (not loading). Polls: {pollCount.current}.
           {pollError.current && <span> Error: {pollError.current}</span>}
@@ -1375,22 +1647,22 @@ export default function TheGrid() {
           <LogoIcon size={16} />
           <span style={S.gridOnline}>GRID ONLINE</span>
         </span>
-        <span style={{ fontSize: 11, color: "#5a5a5a", letterSpacing: 1 }}>ON-CHAIN · INITIA · KECCAK-DERIVED VRF</span>
+        <span style={{ fontSize: 11, color: "#585F67", letterSpacing: 1 }}>ON-CHAIN · INITIA · KECCAK-DERIVED VRF</span>
       </footer>
 
       {/* ─── CSS ─── */}
       <style>{`
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { margin: 0; padding: 0; background: #060606; overflow-x: hidden; }
+        body { margin: 0; padding: 0; background: #0C0C0C; overflow-x: hidden; }
         @keyframes cellAppear { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @keyframes glow {
-          0%, 100% { box-shadow: 0 0 8px rgba(255,255,255,0.3), inset 0 0 8px rgba(255,255,255,0.1); }
-          50% { box-shadow: 0 0 20px rgba(255,255,255,0.6), inset 0 0 15px rgba(255,255,255,0.2); }
+          0%, 100% { box-shadow: 0 0 8px rgba(43,107,255,0.35), inset 0 0 8px rgba(43,107,255,0.12); }
+          50% { box-shadow: 0 0 20px rgba(43,107,255,0.65), inset 0 0 15px rgba(43,107,255,0.22); }
         }
         @keyframes winnerGlow {
-          0%, 100% { box-shadow: 0 0 10px rgba(255,255,255,0.4), inset 0 0 10px rgba(255,255,255,0.1); }
-          50% { box-shadow: 0 0 30px rgba(255,255,255,0.8), inset 0 0 20px rgba(255,255,255,0.3); }
+          0%, 100% { box-shadow: 0 0 10px rgba(43,107,255,0.45), inset 0 0 10px rgba(43,107,255,0.15); }
+          50% { box-shadow: 0 0 30px rgba(43,107,255,0.85), inset 0 0 20px rgba(43,107,255,0.32); }
         }
         @keyframes slideIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
         @keyframes moneyFlowBg {
@@ -1408,7 +1680,7 @@ export default function TheGrid() {
           100% { transform: scale(1); opacity: 1; }
         }
         @keyframes gridResetFlash {
-          0% { background: rgba(255,255,255,0.25); }
+          0% { background: rgba(43,107,255,0.22); }
           100% { background: transparent; }
         }
         @keyframes particleFlow {
@@ -1422,16 +1694,16 @@ export default function TheGrid() {
           100% { opacity: 1; transform: translateY(0); }
         }
         @keyframes scanGlow {
-          0% { text-shadow: 0 0 4px #cfcfcf; }
-          50% { text-shadow: 0 0 12px #cfcfcf, 0 0 24px #cfcfcf44; }
-          100% { text-shadow: 0 0 4px #cfcfcf; }
+          0% { text-shadow: 0 0 4px #2B6BFF; }
+          50% { text-shadow: 0 0 12px #2B6BFF, 0 0 24px #2B6BFF44; }
+          100% { text-shadow: 0 0 4px #2B6BFF; }
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes spinR { to { transform: rotate(-360deg); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes navGlow { 0%,100%{text-shadow:0 0 6px rgba(255,255,255,0.5)}50%{text-shadow:0 0 14px rgba(255,255,255,0.9)} }
-        @keyframes pulse { 0%,100%{opacity:1;box-shadow:0 0 4px #cfcfcf}50%{opacity:0.4;box-shadow:0 0 10px #cfcfcf} }
-        .nav-btn-home:hover { color: #cfcfcf !important; }
+        @keyframes navGlow { 0%,100%{text-shadow:0 0 6px rgba(43,107,255,0.55)}50%{text-shadow:0 0 14px rgba(43,107,255,0.95)} }
+        @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+        .nav-btn-home:hover { color: #F5F5F5 !important; }
         .nav-btn-play { pointer-events: none; }
         .wallet-addr-mobile { display: none !important; }
         .wallet-addr-desktop { display: inline !important; }
@@ -1450,8 +1722,8 @@ export default function TheGrid() {
           to { opacity: 1; transform: translateY(0); }
         }
         .grid-user-history-scroll::-webkit-scrollbar { width: 4px; }
-        .grid-user-history-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.04); }
-        .grid-user-history-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 2px; }
+        .grid-user-history-scroll::-webkit-scrollbar-track { background: #161616; }
+        .grid-user-history-scroll::-webkit-scrollbar-thumb { background: #2F3337; border-radius: 2px; }
         @media (max-width: 768px) {
           .grid-wallet-dropdown { right: 0 !important; left: auto !important; max-width: calc(100vw - 16px) !important; }
         }
@@ -1473,8 +1745,8 @@ export default function TheGrid() {
             z-index: 9999 !important;
             overflow-y: auto !important; overflow-x: hidden !important;
             -webkit-overflow-scrolling: touch !important;
-            background: #0d0d0d !important;
-            border-left: 1px solid rgba(255,255,255,0.25) !important;
+            background: #101010 !important;
+            border-left: 1px solid #242629 !important;
             padding: 0 16px 16px !important;
             padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
             transform: translateX(100%) !important;
@@ -1489,11 +1761,11 @@ export default function TheGrid() {
           }
           .grid-sidebar-header {
             position: sticky !important; top: 0 !important; z-index: 10 !important;
-            background: #0d0d0d !important;
+            background: #101010 !important;
             padding: 16px 0 12px !important;
             margin: 0 -16px !important; padding-left: 16px !important; padding-right: 16px !important;
             padding-top: calc(16px + env(safe-area-inset-top, 0px)) !important;
-            border-bottom: 1px solid rgba(255,255,255,0.15) !important;
+            border-bottom: 1px solid #1B1C1D !important;
             display: flex !important; justify-content: space-between !important; align-items: center !important;
           }
           .grid-game-area {
@@ -1523,16 +1795,16 @@ function LogoIcon({ size = 28 }) {
     <svg width={size} height={size} viewBox="0 0 80 80" fill="none" style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0 }}>
       <defs>
         <linearGradient id={`lg${size}`} x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#cfcfcf" />
-          <stop offset="100%" stopColor="#888888" />
+          <stop offset="0%" stopColor={CYAN} />
+          <stop offset="100%" stopColor={CYAN_DK} />
         </linearGradient>
       </defs>
-      <rect x="4" y="4" width="72" height="72" rx="16" fill={`url(#lg${size})`} />
-      <line x1="30" y1="4" x2="30" y2="76" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
-      <line x1="50" y1="4" x2="50" y2="76" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
-      <line x1="4" y1="30" x2="76" y2="30" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
-      <line x1="4" y1="50" x2="76" y2="50" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
-      <text x="40" y="56" textAnchor="middle" fontFamily="'Orbitron', sans-serif" fontWeight="900" fontSize="48" fill="white" letterSpacing="-2">0</text>
+      <rect x="4" y="4" width="72" height="72" rx="16" fill="#101010" stroke={CYAN} strokeWidth="2" strokeOpacity="0.55" />
+      <line x1="30" y1="4" x2="30" y2="76" stroke="rgba(43,107,255,0.18)" strokeWidth="1.5" />
+      <line x1="50" y1="4" x2="50" y2="76" stroke="rgba(43,107,255,0.18)" strokeWidth="1.5" />
+      <line x1="4" y1="30" x2="76" y2="30" stroke="rgba(43,107,255,0.18)" strokeWidth="1.5" />
+      <line x1="4" y1="50" x2="76" y2="50" stroke="rgba(43,107,255,0.18)" strokeWidth="1.5" />
+      <text x="40" y="56" textAnchor="middle" fontFamily={HEAD} fontWeight="900" fontSize="48" fill={`url(#lg${size})`} letterSpacing="-2">0</text>
     </svg>
   );
 }
@@ -1553,7 +1825,7 @@ function Row({ label, value, hl }) {
   return (
     <div style={S.row}>
       <span style={S.rowLabel}>{label}</span>
-      <span style={{ ...S.rowValue, ...(hl ? { color: "#cfcfcf" } : {}) }}>{value}</span>
+      <span style={{ ...S.rowValue, ...(hl ? { color: "#EDEDED" } : {}) }}>{value}</span>
     </div>
   );
 }
@@ -1564,8 +1836,8 @@ function Row({ label, value, hl }) {
 const S = {
   root: {
     fontFamily: "'JetBrains Mono', monospace",
-    background: "radial-gradient(ellipse at 30% 20%, #141414 0%, #0c0c0c 50%, #060606 100%)",
-    color: "#d8d8d8", minHeight: "100vh",
+    background: "radial-gradient(ellipse at 50% -5%, #0C1733 0%, #101010 40%, #0C0C0C 100%)",
+    color: G2, minHeight: "100vh",
     display: "flex", flexDirection: "column",
     position: "relative",
   },
@@ -1576,41 +1848,42 @@ const S = {
   crtLines: {
     position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
     pointerEvents: "none", zIndex: 1,
-    background: "repeating-linear-gradient(0deg, transparent 0px, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px)",
+    backgroundImage: "radial-gradient(rgba(43,107,255,0.045) 1px, transparent 1px)",
+    backgroundSize: "22px 22px",
   },
   header: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "0 20px", height: 64, borderBottom: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(9,9,11,0.97)", zIndex: 10, position: "relative",
+    padding: "0 20px", height: 64, borderBottom: "1px solid #1B1C1D",
+    background: "rgba(12,12,12,0.94)", backdropFilter: "blur(8px)", zIndex: 10, position: "relative",
     flexWrap: "nowrap", gap: 8, flexShrink: 0,
   },
   hLeft: { display: "flex", alignItems: "center", gap: 10, flexShrink: 0 },
   hRight: { display: "flex", alignItems: "center", gap: 10, flexShrink: 0, minWidth: 0 },
-  dot: { width: 10, height: 10, borderRadius: 3, background: "#888888", boxShadow: "0 0 12px rgba(255,255,255,0.6)" },
-  logo: { fontFamily: "'Orbitron', sans-serif", fontWeight: 900, fontSize: 18, color: "#cfcfcf", letterSpacing: 2 },
-  logoSub: { fontFamily: "'Orbitron', sans-serif", fontWeight: 500, fontSize: 18, color: "#ededed", letterSpacing: 2 },
-  badge: { fontSize: 9, padding: "2px 6px", borderRadius: 3, background: "rgba(255,255,255,0.12)", color: "#cfcfcf", letterSpacing: 1.5, fontWeight: 600 },
-  hStat: { fontSize: 13, color: "#8a8a8a", letterSpacing: 0.5, fontFamily: "'JetBrains Mono', monospace" },
+  dot: { width: 10, height: 10, borderRadius: 3, background: CYAN, boxShadow: `0 0 12px ${CYAN}` },
+  logo: { fontFamily: HEAD, fontWeight: 900, fontSize: 18, color: G0, letterSpacing: 2 },
+  logoSub: { fontFamily: HEAD, fontWeight: 600, fontSize: 18, color: CYAN, letterSpacing: 2 },
+  badge: { fontSize: 9, padding: "2px 6px", borderRadius: 3, background: CYAN_BG, color: CYAN, letterSpacing: 1.5, fontWeight: 700 },
+  hStat: { fontSize: 13, color: G2, letterSpacing: 0.5, fontFamily: "'JetBrains Mono', monospace" },
   loginBtn: {
-    fontFamily: "'Orbitron', sans-serif", fontSize: 11, fontWeight: 700,
-    padding: "7px 12px", borderRadius: 6,
-    border: "1px solid #888888",
-    background: "linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05))",
-    color: "#cfcfcf", cursor: "pointer", letterSpacing: 1.5,
+    fontFamily: HEAD, fontSize: 11, fontWeight: 800,
+    padding: "7px 14px", borderRadius: 6,
+    border: `1px solid ${CYAN}`,
+    background: CYAN_BG,
+    color: CYAN, cursor: "pointer", letterSpacing: 1.5,
   },
-  menuBtn: { fontSize: 20, background: "none", border: "1px solid rgba(255,255,255,0.15)", color: "#d8d8d8", borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
+  menuBtn: { fontSize: 20, background: "none", border: "1px solid #242629", color: G1, borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
   main: { display: "flex", flex: 1, gap: 0, position: "relative", zIndex: 5 },
   gridArea: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", padding: "16px 24px", minHeight: 0, overflowY: "auto" },
   timerWrap: { width: "100%", maxWidth: 620, display: "flex", alignItems: "center", gap: 12, marginBottom: 12 },
-  timerBarBg: { flex: 1, height: 12, borderRadius: 6, background: "rgba(255,255,255,0.08)", overflow: "hidden", border: "1px solid rgba(255,255,255,0.06)" },
+  timerBarBg: { flex: 1, height: 12, borderRadius: 6, background: "#1B1C1D", overflow: "hidden", border: "1px solid #242629" },
   timerBarFill: { height: "100%", borderRadius: 6 },
-  timerNum: { fontFamily: "'Orbitron', sans-serif", fontSize: 20, fontWeight: 700, transition: "color 0.5s ease" },
+  timerNum: { fontFamily: HEAD, fontSize: 20, fontWeight: 800, transition: "color 0.5s ease" },
   timerMs: { fontSize: 14, opacity: 0.7 },
   gridOuter: { position: "relative", width: "100%", maxWidth: 620, padding: 12 },
-  cornerTL: { position: "absolute", top: 0, left: 0, width: 20, height: 20, borderLeft: "2px solid rgba(255,255,255,0.4)", borderTop: "2px solid rgba(255,255,255,0.4)" },
-  cornerTR: { position: "absolute", top: 0, right: 0, width: 20, height: 20, borderRight: "2px solid rgba(255,255,255,0.4)", borderTop: "2px solid rgba(255,255,255,0.4)" },
-  cornerBL: { position: "absolute", bottom: 0, left: 0, width: 20, height: 20, borderLeft: "2px solid rgba(255,255,255,0.4)", borderBottom: "2px solid rgba(255,255,255,0.4)" },
-  cornerBR: { position: "absolute", bottom: 0, right: 0, width: 20, height: 20, borderRight: "2px solid rgba(255,255,255,0.4)", borderBottom: "2px solid rgba(255,255,255,0.4)" },
+  cornerTL: { position: "absolute", top: 0, left: 0, width: 20, height: 20, borderLeft: `2px solid ${CYAN}`, borderTop: `2px solid ${CYAN}`, opacity: 0.55 },
+  cornerTR: { position: "absolute", top: 0, right: 0, width: 20, height: 20, borderRight: `2px solid ${CYAN}`, borderTop: `2px solid ${CYAN}`, opacity: 0.55 },
+  cornerBL: { position: "absolute", bottom: 0, left: 0, width: 20, height: 20, borderLeft: `2px solid ${CYAN}`, borderBottom: `2px solid ${CYAN}`, opacity: 0.55 },
+  cornerBR: { position: "absolute", bottom: 0, right: 0, width: 20, height: 20, borderRight: `2px solid ${CYAN}`, borderBottom: `2px solid ${CYAN}`, opacity: 0.55 },
   grid: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, width: "100%" },
   cell: {
     fontFamily: "'JetBrains Mono', monospace", position: "relative",
@@ -1623,101 +1896,108 @@ const S = {
     touchAction: "manipulation",
     border: "none",
   },
-  // ── Base logo zones ──
+  // ── Base logo zones (Initia gray ramp) ──
   cellDark: {
-    background: "linear-gradient(145deg, #242424 0%, #1c1c1c 60%, #161616 100%)",
-    border: "1px solid rgba(255,255,255,0.25)",
-    color: "rgba(160,160,160,0.45)",
-    boxShadow: "inset 0 1px 3px rgba(0,0,0,0.4), 0 0 4px rgba(255,255,255,0.06)",
+    background: "#1B1C1D",
+    border: "1px solid #2F3337",
+    color: G4,
+    boxShadow: "inset 0 1px 3px rgba(0,0,0,0.4)",
   },
   cellLight: {
-    background: "linear-gradient(145deg, rgba(225,225,225,0.14) 0%, rgba(205,205,205,0.09) 60%, rgba(190,190,190,0.06) 100%)",
-    border: "1px solid rgba(215,215,215,0.2)",
-    color: "rgba(222,222,222,0.7)",
-    boxShadow: "inset 0 1px 5px rgba(255,255,255,0.04), 0 0 6px rgba(215,215,215,0.04)",
+    background: "#242629",
+    border: "1px solid #383D42",
+    color: G3,
+    boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)",
   },
   cellOpening: {
-    background: "linear-gradient(145deg, rgba(238,238,238,0.18) 0%, rgba(228,228,228,0.13) 60%, rgba(212,212,212,0.09) 100%)",
-    border: "1px solid rgba(232,232,232,0.24)",
-    color: "rgba(236,236,236,0.8)",
-    boxShadow: "inset 0 1px 6px rgba(255,255,255,0.06), 0 0 8px rgba(232,232,232,0.06)",
+    background: "#2F3337",
+    border: "1px solid #383D42",
+    color: G2,
+    boxShadow: "inset 0 1px 4px rgba(0,0,0,0.25)",
   },
   cellDarkHover: {
-    background: "linear-gradient(145deg, #2c2c2c 0%, #222222 60%, #1a1a1a 100%)",
-    borderColor: "rgba(255,255,255,0.5)",
-    color: "rgba(210,210,210,0.8)",
-    boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3), 0 0 16px rgba(255,255,255,0.2)",
+    background: "#242629",
+    borderColor: `${CYAN}66`,
+    color: CYAN_LT,
+    boxShadow: `inset 0 1px 3px rgba(0,0,0,0.3), 0 0 16px rgba(43,107,255,0.18)`,
   },
   cellLightHover: {
-    background: "linear-gradient(145deg, rgba(236,236,236,0.22) 0%, rgba(220,220,220,0.16) 60%, rgba(205,205,205,0.12) 100%)",
-    borderColor: "rgba(236,236,236,0.38)",
-    color: "rgba(245,245,245,0.95)",
-    boxShadow: "inset 0 1px 5px rgba(255,255,255,0.08), 0 0 18px rgba(215,215,215,0.1)",
+    background: "#2F3337",
+    borderColor: `${CYAN}77`,
+    color: CYAN_LT,
+    boxShadow: `0 0 18px rgba(43,107,255,0.2)`,
   },
   cellOpeningHover: {
-    background: "linear-gradient(145deg, rgba(245,245,245,0.28) 0%, rgba(238,238,238,0.2) 60%, rgba(228,228,228,0.16) 100%)",
-    borderColor: "rgba(245,245,245,0.42)",
-    color: "white",
-    boxShadow: "inset 0 1px 6px rgba(255,255,255,0.12), 0 0 22px rgba(232,232,232,0.14)",
+    background: "#383D42",
+    borderColor: `${CYAN}88`,
+    color: CYAN,
+    boxShadow: `0 0 22px rgba(43,107,255,0.25)`,
   },
-  cellClaimed: { borderColor: "rgba(255,255,255,0.5)", color: "#cfcfcf" },
-  cellYours: { borderColor: "rgba(255,255,255,0.65)", color: "#e8e8e8", animation: "glow 2s ease-in-out infinite" },
-  cellWinner: { background: "rgba(255,255,255,0.12)", borderColor: "rgba(255,255,255,0.55)", color: "#ffffff", boxShadow: "0 0 20px rgba(255,255,255,0.4), inset 0 0 12px rgba(255,255,255,0.15)", animation: "winnerGlow 1.5s ease-in-out infinite" },
-  cellSelected: { background: "rgba(255,255,255,0.22)", borderColor: "#888888", color: "#fff", boxShadow: "0 0 24px rgba(255,255,255,0.4)" },
+  cellClaimed: { borderColor: CYAN_DK, color: CYAN_LT },
+  cellYours: { borderColor: CYAN, color: CYAN, background: CYAN_BG, animation: "glow 2s ease-in-out infinite" },
+  cellWinner: { background: CYAN_BG, borderColor: CYAN, color: CYAN, boxShadow: "0 0 22px rgba(43,107,255,0.5), inset 0 0 12px rgba(43,107,255,0.2)", animation: "winnerGlow 1.5s ease-in-out infinite" },
+  cellSelected: { background: CYAN_BG, borderColor: CYAN, color: CYAN, boxShadow: "0 0 24px rgba(43,107,255,0.45)" },
   cellLabel: { letterSpacing: 1 },
   cellIcon: { fontSize: 16 },
-  statusBar: { display: "flex", justifyContent: "space-between", width: "100%", maxWidth: 620, padding: "8px 12px", marginTop: 8, fontSize: 11, letterSpacing: 1.5, color: "#6a6a6a" },
+  statusBar: { display: "flex", justifyContent: "space-between", width: "100%", maxWidth: 620, padding: "8px 12px", marginTop: 8, fontSize: 11, letterSpacing: 1.5, color: G3 },
   dots: { display: "flex", gap: 3, width: "100%", maxWidth: 620, padding: "0 12px" },
   progressDot: { flex: 1, height: 3, borderRadius: 2, transition: "background-color 0.5s ease" },
   sidebar: {
-    width: 340, minWidth: 300, borderLeft: "1px solid rgba(255,255,255,0.08)",
-    background: "rgba(11,11,13,0.98)", padding: 16,
+    width: 340, minWidth: 300, borderLeft: "1px solid #1B1C1D",
+    background: "rgba(16,16,16,0.98)", padding: 16,
     display: "flex", flexDirection: "column", gap: 12,
     overflowY: "auto", maxHeight: "calc(100vh - 100px)",
   },
-  closeBtn: { alignSelf: "flex-end", background: "none", border: "none", color: "#8a8a8a", fontSize: 18, cursor: "pointer", padding: "4px 8px" },
-  loginPrompt: { border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, background: "rgba(255,255,255,0.04)", padding: 16, textAlign: "center" },
-  loginPromptTitle: { fontFamily: "'Orbitron', sans-serif", fontSize: 16, fontWeight: 700, color: "#ededed", marginTop: 14, marginBottom: 8, letterSpacing: 2 },
-  loginPromptText: { fontSize: 12, color: "#8a8a8a", marginBottom: 12, lineHeight: 1.5 },
-  panel: { border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, background: "rgba(255,255,255,0.02)", overflow: "hidden" },
-  panelHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#a8a8a8", borderBottom: "1px solid rgba(255,255,255,0.06)" },
-  liveTag: { color: "#cfcfcf", fontSize: 10, letterSpacing: 1, animation: "scanGlow 2s ease-in-out infinite" },
+  closeBtn: { alignSelf: "flex-end", background: "none", border: "none", color: G2, fontSize: 18, cursor: "pointer", padding: "4px 8px" },
+  loginPrompt: { border: `1px solid ${CYAN}33`, borderRadius: 8, background: CYAN_BG, padding: 16, textAlign: "center" },
+  loginPromptTitle: { fontFamily: HEAD, fontSize: 16, fontWeight: 800, color: G0, marginTop: 14, marginBottom: 8, letterSpacing: 2 },
+  loginPromptText: { fontSize: 12, color: G2, marginBottom: 12, lineHeight: 1.5 },
+  panel: { border: "1px solid #242629", borderRadius: 8, background: "#101010", overflow: "hidden" },
+  panelHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", fontSize: 11, fontWeight: 800, letterSpacing: 2, color: G1, borderBottom: "1px solid #1B1C1D", fontFamily: HEAD },
+  liveTag: { color: CYAN, fontSize: 10, letterSpacing: 1, animation: "scanGlow 2s ease-in-out infinite" },
   row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 12 },
-  rowLabel: { color: "#7a7a7a", letterSpacing: 0.5 },
-  rowValue: { fontWeight: 600, color: "#d8d8d8", fontFamily: "'Orbitron', sans-serif", fontSize: 13 },
+  rowLabel: { color: G3, letterSpacing: 0.5 },
+  rowValue: { fontWeight: 800, color: G1, fontFamily: HEAD, fontSize: 13 },
   claimBtn: {
-    fontFamily: "'Orbitron', sans-serif", fontSize: 12, fontWeight: 700,
+    fontFamily: HEAD, fontSize: 12, fontWeight: 800,
     padding: "14px 20px", borderRadius: 8,
     border: "none",
-    background: "linear-gradient(135deg, #888888, #cfcfcf)",
-    color: "#fff", cursor: "pointer", letterSpacing: 1,
+    background: CYAN,
+    color: "#04181E", cursor: "pointer", letterSpacing: 1,
     transition: "all 0.2s", textAlign: "center", width: "100%",
-    boxShadow: "0 4px 20px rgba(255,255,255,0.3)",
+    boxShadow: "0 4px 24px rgba(43,107,255,0.35)",
   },
-  claimingBar: { display: "flex", alignItems: "center", gap: 10, padding: "14px 20px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", color: "#e8e8e8", fontSize: 12, fontWeight: 600, letterSpacing: 1 },
-  claimingDot: { width: 8, height: 8, borderRadius: "50%", background: "#e8e8e8", animation: "pulse 1s ease-in-out infinite" },
-  errorBox: { padding: "10px 14px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", color: "#8a8a8a", fontSize: 11, cursor: "pointer" },
+  claimingBar: { display: "flex", alignItems: "center", gap: 10, padding: "14px 20px", borderRadius: 8, border: `1px solid ${CYAN}55`, background: CYAN_BG, color: CYAN, fontSize: 12, fontWeight: 600, letterSpacing: 1 },
+  claimingDot: { width: 8, height: 8, borderRadius: "50%", background: CYAN, animation: "pulse 1s ease-in-out infinite" },
+  errorBox: { padding: "10px 14px", borderRadius: 6, border: `1px solid ${LOSS}55`, background: "rgba(248,84,84,0.08)", color: LOSS, fontSize: 11, cursor: "pointer" },
   feedBody: { maxHeight: 200, overflowY: "auto" },
-  feedEmpty: { color: "#444444", fontSize: 12, fontStyle: "italic", padding: "12px 0" },
-  feedItem: { fontSize: 11, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.03)", display: "flex", gap: 8, animation: "slideIn 0.3s ease" },
-  feedTime: { color: "#444444", fontSize: 10, flexShrink: 0 },
-  footer: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(9,9,11,0.95)", zIndex: 10, position: "relative" },
-  greenDot: { display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#cfcfcf", boxShadow: "0 0 6px #cfcfcf88" },
-  gridOnline: { fontSize: 12, fontWeight: 700, color: "#cfcfcf", letterSpacing: 1.5, animation: "scanGlow 3s ease-in-out infinite" },
+  feedEmpty: { color: G4, fontSize: 12, fontStyle: "italic", padding: "12px 0" },
+  feedItem: { fontSize: 11, padding: "4px 0", borderBottom: "1px solid #1B1C1D", display: "flex", gap: 8, animation: "slideIn 0.3s ease" },
+  feedTime: { color: G4, fontSize: 10, flexShrink: 0 },
+  footer: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderTop: "1px solid #1B1C1D", background: "rgba(12,12,12,0.95)", zIndex: 10, position: "relative" },
+  greenDot: { display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: CYAN, boxShadow: `0 0 6px ${CYAN}88` },
+  gridOnline: { fontSize: 12, fontWeight: 800, color: CYAN, letterSpacing: 1.5, fontFamily: HEAD, animation: "scanGlow 3s ease-in-out infinite" },
   dropdownItem: {
     display: "flex", alignItems: "center", gap: 10,
     padding: "12px 14px", fontFamily: "'JetBrains Mono', monospace",
-    fontSize: 11, color: "#d8d8d8", cursor: "pointer",
+    fontSize: 11, color: G1, cursor: "pointer",
     border: "none", background: "none", width: "100%",
     textAlign: "left", letterSpacing: 0.5,
     WebkitTapHighlightColor: "transparent",
   },
-  dropdownIcon: { fontSize: 14, width: 20, textAlign: "center" },
-  dropdownDivider: { height: 1, background: "rgba(255,255,255,0.06)" },
+  dropdownIcon: { fontSize: 14, width: 20, textAlign: "center", color: CYAN },
+  dropdownDivider: { height: 1, background: "#1B1C1D" },
   dropdownInput: {
     width: "100%", padding: "10px 12px", fontSize: 11,
     fontFamily: "'JetBrains Mono', monospace",
-    background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.15)",
-    borderRadius: 6, color: "#d8d8d8", outline: "none", letterSpacing: 0.3,
+    background: "#0C0C0C", border: "1px solid #2F3337",
+    borderRadius: 6, color: G1, outline: "none", letterSpacing: 0.3,
   },
+  // ── LIVE STATS strip ──
+  statsWrap: { width: "100%", maxWidth: 620, marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 },
+  statsRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 },
+  statCard: { background: "#101010", border: "1px solid #242629", borderRadius: 8, padding: "9px 11px", display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
+  statLabel: { fontSize: 8, letterSpacing: 1.5, color: G4, fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  statValue: { fontFamily: HEAD, fontSize: 15, fontWeight: 800, color: G1, lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  statSub: { fontSize: 8, color: G4, letterSpacing: 0.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
 };

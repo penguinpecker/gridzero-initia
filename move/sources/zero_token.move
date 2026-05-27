@@ -1,15 +1,15 @@
 /// $ZERO - the gridZERO reward token.
 ///
-/// Native Initia fungible asset (initia_std::coin / fungible_asset standard), the
+/// Native Initia fungible asset (minitia_std::coin / fungible_asset standard), the
 /// Move-native replacement for the original ERC-20 `ZeroToken` on Base. Minting is
 /// restricted to the `gridzero::game` module via a `friend` declaration, mirroring
 /// the original "GridZeroV4 is the sole authorized minter" design.
 module gridzero::zero_token {
     use std::option;
     use std::string;
-    use initia_std::coin::{Self, MintCapability, BurnCapability, FreezeCapability};
-    use initia_std::fungible_asset::{Metadata, FungibleAsset};
-    use initia_std::object::{Self, Object};
+    use minitia_std::coin::{Self, MintCapability, BurnCapability, FreezeCapability};
+    use minitia_std::fungible_asset::{Metadata, FungibleAsset};
+    use minitia_std::object::{Self, Object};
 
     friend gridzero::game;
 
