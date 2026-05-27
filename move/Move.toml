@@ -1,0 +1,13 @@
+[package]
+name = "gridzero"
+version = "1.0.0"
+# gridZERO initia — native Move port of GridZero (Base L2) to Initia mainnet (interwoven-1)
+
+[addresses]
+# Provided at compile/publish time: --named-addresses gridzero=0x<deployer>
+gridzero = "_"
+
+[dependencies.InitiaStdlib]
+git = "https://github.com/initia-labs/movevm.git"
+subdir = "precompile/modules/initia_stdlib"
+rev = "main"

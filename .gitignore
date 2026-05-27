@@ -1,0 +1,29 @@
+# deps
+node_modules/
+**/node_modules/
+
+# next.js
+app/.next/
+app/out/
+
+# move build artifacts + toolchain
+move/build/
+.tools/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+**/.env
+!**/.env.example
+
+# local working references (the original Base source) — not part of this fork
+reference/
+
+# vercel link dir
+.vercel/
+**/.vercel/
+
+# os
+.DS_Store
+**/.DS_Store
