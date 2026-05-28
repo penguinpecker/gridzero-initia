@@ -1,0 +1,29 @@
+# gridZERO sequencer (minitiad / MiniMove) — Railway service
+# Uses the prebuilt minimove binary (avoids Alpine/musl-vs-glibc incompat with movevm .so files).
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl jq tar gzip bash && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG MINIMOVE_REF=v1.1.12
+ARG TARGETARCH=amd64
+# Download + extract prebuilt minitiad (binary + .so libs) into /usr/local/
+RUN ARCH=$([ "$TARGETARCH" = "arm64" ] && echo aarch64 || echo x86_64); \
+    curl -sSL "https://github.com/initia-labs/minimove/releases/download/${MINIMOVE_REF}/minimove_${MINIMOVE_REF}_Linux_${ARCH}.tar.gz" -o /tmp/m.tgz && \
+    tar -xzf /tmp/m.tgz -C /tmp && \
+    install -m 0755 /tmp/minitiad /usr/local/bin/minitiad && \
+    find /tmp -maxdepth 2 -name "*.so" -exec install -m 0644 {} /usr/local/lib/ \; && \
+    ldconfig && \
+    rm -rf /tmp/m.tgz /tmp/minitiad && \
+    /usr/local/bin/minitiad version 2>&1 | head -1
+
+COPY entrypoint.sequencer.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Bootstrap snapshot baked in (118KB) — auto-restored to MINITIA_HOME on first start
+COPY seed/gridzero-1-node-home.tgz /seed/gridzero-1-node-home.tgz
+
+ENV MINITIA_HOME=/data/.minitia
+EXPOSE 26657 1317 9090 26656
+ENTRYPOINT ["/entrypoint.sh"]

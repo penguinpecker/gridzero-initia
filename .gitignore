@@ -17,6 +17,13 @@ move/build/
 **/.env
 !**/.env.example
 
+# cloud / infra secrets (Hetzner API token, SSH keys)
+.hcloud-token
+*.token
+.secrets/
+id_ed25519*
+*.pem
+
 # local working references (the original Base source) — not part of this fork
 reference/
 
@@ -27,3 +34,7 @@ reference/
 # os
 .DS_Store
 **/.DS_Store
+rollup/seed/
+
+# local bug/state log — never commit
+records.txt

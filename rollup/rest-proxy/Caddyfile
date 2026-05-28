@@ -1,0 +1,14 @@
+{
+    auto_https off
+    admin off
+}
+:{$PORT} {
+    reverse_proxy {$REST_TARGET} {
+        header_up Host {http.reverse_proxy.upstream.hostport}
+    }
+    encode gzip
+    log {
+        output stdout
+        format console
+    }
+}

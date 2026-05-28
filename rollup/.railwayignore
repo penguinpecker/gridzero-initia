@@ -1,0 +1,6 @@
+# Only ship rollup/ contents; nothing else
+**/.git
+**/node_modules
+**/.env
+**/.env.*
+!seed/*.tgz

@@ -1,0 +1,25 @@
+{
+  "l1_config": {
+    "chain_id": "interwoven-1",
+    "rpc_url": "https://rpc.initia.xyz:443",
+    "gas_prices": "0.015uinit"
+  },
+  "l2_config": {
+    "chain_id": "gridzero-1",
+    "denom": "uinit",
+    "moniker": "gridzero-sequencer"
+  },
+  "op_bridge": {
+    "output_submission_interval": "1h0m0s",
+    "output_finalization_period": "168h0m0s",
+    "output_submission_start_height": 1,
+    "batch_submission_target": "INITIA",
+    "enable_oracle": true
+  },
+  "genesis_accounts": [
+    {
+      "address": "init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc",
+      "coins": "1000000000uinit"
+    }
+  ]
+}
