@@ -123,8 +123,10 @@ body {
   .play-grid-col .play-grid-outer,
   .play-grid-col .play-timer,
   .play-grid-col .play-status,
-  .play-grid-col .play-dots {
+  .play-grid-col .play-dots,
+  .play-grid-col .grid-mobile-user-history {
     max-width: 720px !important;
+    width: 100% !important;
   }
 
   /* Right column — sidebar; align to top, fill its width */

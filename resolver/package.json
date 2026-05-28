@@ -4,6 +4,10 @@
   "description": "Resolver / fulfiller bot for gridZERO initia (Move game on Initia mainnet, interwoven-1). Polls rounds, resolves/skips them on-chain, and streams events to the frontend over SSE.",
   "type": "module",
   "private": true,
+  "contributors": [
+    { "name": "penguinpecker", "url": "https://github.com/penguinpecker" },
+    { "name": "Claude Opus 4.7", "url": "https://claude.com/claude-code" }
+  ],
   "scripts": {
     "start": "node src/resolver.js"
   },

@@ -2,6 +2,10 @@
   "name": "gridzero-app",
   "version": "3.0.0",
   "private": true,
+  "contributors": [
+    { "name": "penguinpecker", "url": "https://github.com/penguinpecker" },
+    { "name": "Claude Opus 4.7", "url": "https://claude.com/claude-code" }
+  ],
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

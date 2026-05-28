@@ -949,7 +949,7 @@ export default function TheGrid() {
                               </span>
                               <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
                                 {pickTx ? (
-                                  <a href={`${EXPLORER}/txs/${pickTx}`} target="_blank" rel="noopener noreferrer"
+                                  <a href={`/tx/${pickTx}`} target="_blank" rel="noopener noreferrer"
                                     title="Your entry (pick) tx"
                                     style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
                                     {shortTx(pickTx)} ↗
@@ -960,7 +960,7 @@ export default function TheGrid() {
                               </span>
                               <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
                                 {payoutTx ? (
-                                  <a href={`${EXPLORER}/txs/${payoutTx}`} target="_blank" rel="noopener noreferrer"
+                                  <a href={`/tx/${payoutTx}`} target="_blank" rel="noopener noreferrer"
                                     title="Payout + $ZERO mint tx"
                                     style={{ color: WIN, textDecoration: "none", whiteSpace: "nowrap" }}>
                                     {shortTx(payoutTx)} ↗
@@ -1353,7 +1353,7 @@ export default function TheGrid() {
                       </span>
                       <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
                         {pickTx ? (
-                          <a href={`${EXPLORER}/txs/${pickTx}`} target="_blank" rel="noopener noreferrer"
+                          <a href={`/tx/${pickTx}`} target="_blank" rel="noopener noreferrer"
                             title="Your entry (pick) tx"
                             style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
                             {shortTx(pickTx)} ↗
@@ -1364,7 +1364,7 @@ export default function TheGrid() {
                       </span>
                       <span style={{ textAlign: "right", fontSize: 9, fontFamily: "'JetBrains Mono', monospace" }}>
                         {payoutTx ? (
-                          <a href={`${EXPLORER}/txs/${payoutTx}`} target="_blank" rel="noopener noreferrer"
+                          <a href={`/tx/${payoutTx}`} target="_blank" rel="noopener noreferrer"
                             title="Payout + $ZERO mint tx"
                             style={{ color: WIN, textDecoration: "none", whiteSpace: "nowrap" }}>
                             {shortTx(payoutTx)} ↗
@@ -1501,7 +1501,7 @@ export default function TheGrid() {
                       }}>{fmt(r.pot)}</span>
                       <span style={{ textAlign: "right", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>
                         {txHash ? (
-                          <a href={`${EXPLORER}/txs/${txHash}`} target="_blank" rel="noopener noreferrer"
+                          <a href={`/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
                             title="Payout + $ZERO mint tx"
                             style={{ color: CYAN, textDecoration: "none", whiteSpace: "nowrap" }}>
                             {shortTx(txHash)} ↗
@@ -1606,7 +1606,7 @@ export default function TheGrid() {
             <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 9, letterSpacing: 1.5, color: "#585F67", fontWeight: 700, flexShrink: 0 }}>GRIDZERO PKG</span>
-                <a href={`https://scan.initia.xyz/${CHAIN_ID}/accounts/${GRIDZERO_PKG}`} target="_blank" rel="noopener noreferrer"
+                <a href={`https://scan.initia.xyz/interwoven-1/accounts/${GRIDZERO_PKG}`} target="_blank" rel="noopener noreferrer"
                   style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: CYAN, textDecoration: "none", wordBreak: "break-all", textAlign: "right" }}>
                   {`${GRIDZERO_PKG.slice(0, 12)}…${GRIDZERO_PKG.slice(-8)}`} ↗
                 </a>
