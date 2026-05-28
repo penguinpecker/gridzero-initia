@@ -1289,7 +1289,7 @@ export default function TheGrid() {
           {/* ─── MOBILE USER HISTORY (hidden on desktop, shown on mobile) ─── */}
           {authenticated && userHistory.length > 0 && (
             <div className="grid-mobile-user-history" style={{
-              width: "100%", maxWidth: 520, marginTop: 14,
+              width: "100%", maxWidth: 720, marginTop: 14,
               borderRadius: 10,
               border: "1px solid #242629",
               background: "#101010",
