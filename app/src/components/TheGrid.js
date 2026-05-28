@@ -1307,7 +1307,7 @@ export default function TheGrid() {
                 </span>
               </div>
               <div style={{
-                display: "grid", gridTemplateColumns: "38px 50px 28px 1fr 50px 50px",
+                display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
                 padding: "8px 16px 4px", gap: 4,
                 borderBottom: "1px solid #1B1C1D",
               }}>
@@ -1330,7 +1330,7 @@ export default function TheGrid() {
                   const payoutTx = isWin ? (roundTxMap.get(Number(h.roundId)) || null) : null;
                   return (
                     <div key={h.roundId} style={{
-                      display: "grid", gridTemplateColumns: "38px 50px 28px 1fr 50px 50px",
+                      display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
                       alignItems: "center",
                       padding: "7px 16px", gap: 4,
                       borderBottom: "1px solid #161616",
