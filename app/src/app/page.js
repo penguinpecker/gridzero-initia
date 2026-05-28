@@ -435,7 +435,7 @@ export default function HomePage() {
         </div>
         <div style={{border:"1px solid #242629",borderRadius:10,background:"#101010",overflow:"hidden"}}>
           {[
-            {l:"GRIDZERO PACKAGE",v:"init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc",link:"https://scan.initia.xyz/interwoven-1/account/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc",mono:true},
+            {l:"GRIDZERO PACKAGE",v:"init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc",link:"https://scan.initia.xyz/interwoven-1/accounts/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc",mono:true},
             {l:"$ZERO ASSET",v:"Native fungible asset · 6 decimals"},
             {l:"CHAIN",v:"interwoven-1 (Initia mainnet)"},
             {l:"ENTRY / RANDOMNESS",v:"Native INIT entry · keccak-derived on-chain VRF"},
@@ -464,7 +464,7 @@ export default function HomePage() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
             @gridzerogg
           </a>
-          <a href="https://scan.initia.xyz/interwoven-1/account/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc" target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:G3,textDecoration:"none",letterSpacing:1}}>CONTRACT</a>
+          <a href="https://scan.initia.xyz/interwoven-1/accounts/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc" target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:G3,textDecoration:"none",letterSpacing:1}}>CONTRACT</a>
           <a href="https://scan.initia.xyz/interwoven-1" target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:G3,textDecoration:"none",letterSpacing:1}}>EXPLORER</a>
         </div>
         <div style={{fontSize:10,color:G4,letterSpacing:1}}>ON-CHAIN · INITIA · VRF</div>

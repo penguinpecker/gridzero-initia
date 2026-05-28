@@ -1,332 +1,314 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Chain-Initia_interwoven--1-black?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Entry-1_INIT-lightgrey?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/VM-MoveVM-grey?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Status-Awaiting_Mainnet_Deploy-grey?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Chain-gridzero--1-2B6BFF?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/VM-MoveVM-black?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Bridge-OPinit_47-black?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Status-LIVE-2B6BFF?style=for-the-badge" />
 </p>
 
-<h1 align="center">◇ ◈ G R I D Z E R O ◈ ◇</h1>
+<h1 align="center">◇ ◈ &nbsp; G R I D Z E R O &nbsp; ◈ ◇</h1>
 
 <p align="center">
-  <code>ZERO KNOWLEDGE OF YOUR FATE · FULL DEGEN</code>
-</p>
-
-<p align="center">
-  A provably fair 5×5 grid game on <strong>Initia</strong>.<br/>
-  Pick a cell. Hope the math gods pick the same one.<br/>
-  Winner takes the pot. Every <strong>60 seconds</strong>. Forever.
+  An on-chain 5×5 lottery game running as its own appchain on <a href="https://initia.xyz">Initia</a>.<br/>
+  Pick a cell. Wait 60 seconds. Winner takes the pot — atomic payout, no claim step.
 </p>
 
 <p align="center">
-  <a href="https://gridzero-one.vercel.app"><strong>▶ Play Now</strong></a> &nbsp;·&nbsp;
-  <a href="https://gridzero-miniapp.vercel.app"><strong>◉ Mini App</strong></a> &nbsp;·&nbsp;
-  <a href="https://gridzero-one.vercel.app/how-to-play"><strong>◇ How to Play</strong></a>
+  <a href="https://gridzero-initia.vercel.app/play"><strong>▶ Play</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://scan.initia.xyz/interwoven-1/accounts/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc"><strong>L1 modules</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://gridzero-sequencer-production.up.railway.app/status"><strong>L2 status</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/initia-labs/initia-registry/pull/835"><strong>Registry PR #835</strong></a>
 </p>
 
 ---
 
-## WTF is GridZero?
+## Overview
 
-GridZero is an onchain lottery that runs every **60 seconds** on **Initia** (`interwoven-1`).
+gridZERO is the **`gridzero-1`** appchain on Initia mainnet — a single-purpose MiniMove rollup whose only job is to run one Move package: `gridzero::game` + `gridzero::zero_token`. Every 60 seconds a new round opens, players pick one of 25 cells for 1 INIT, and when the round ends a winner is chosen from occupied cells using an on-chain keccak derivation of fulfiller-supplied entropy. INIT prize and $ZERO emission are paid in the same transaction as resolution.
 
-There's a 5×5 grid. You pick a cell. You pay **1 INIT**. When the round ends, a cryptographically random winning cell is revealed using a keccak-derived VRF (Verifiable Random Function). If you're standing on the winning cell — **you take the pot**.
-
-No house-edge rigging. No backend coin flips. Just pure math, derived on-chain by the native **`keccak` module**, settled in a single MoveVM transaction for anyone to audit.
-
-> **This isn't trust-me-bro gambling. This is trust-the-math gambling.**
+The game was originally a Base-L2 + ZK-VRF system. The Initia port removes ZK entirely (the VRF was never the trust root — the fulfiller always supplied the entropy), swaps USDC for native INIT, and reimplements the game logic as native Move. Gas on `gridzero-1` is free (`fixed_min_gas_price = 0`), so playing costs only the 1 INIT entry.
 
 ---
 
-## 🕹️ How to Play
+## How a round plays out
 
 ```
          ┌─────┬─────┬─────┬─────┬─────┐
-         │  0  │  1  │  2  │  3  │  4  │
+   A     │  0  │  1  │  2  │  3  │  4  │
          ├─────┼─────┼─────┼─────┼─────┤
-         │  5  │  6  │ ×5  │  8  │  9  │
+   B     │  5  │  6  │  7  │  8  │  9  │
          ├─────┼─────┼─────┼─────┼─────┤
-         │ 10  │ 11  │ YOU │ 13  │ 14  │
+   C     │ 10  │ 11  │ 12  │ 13  │ 14  │
          ├─────┼─────┼─────┼─────┼─────┤
-         │ 15  │ 16  │ 17  │  ✓  │ 19  │
+   D     │ 15  │ 16  │ 17  │ 18  │ 19  │
          ├─────┼─────┼─────┼─────┼─────┤
-         │ 20  │ 21  │ 22  │ 23  │ 24  │
+   E     │ 20  │ 21  │ 22  │ 23  │ 24  │
          └─────┴─────┴─────┴─────┴─────┘
-          ×5 = hot cell    YOU = your pick    ✓ = winner
+            1     2     3     4     5
 ```
 
-### The Loop
+| Step | What happens |
+|:----:|:--|
+| **1. Open** | A new 60s round opens, anchored to L2 block time. |
+| **2. Pick** | Anyone calls `game::pick_cell(cell)` — costs 1 INIT, one cell per address per round. The pot grows. |
+| **3. Close** | At `close_ts`, the round is closed to new picks. |
+| **4. Resolve** | The resolver bot submits 32 random bytes; the contract derives `winning_cell = keccak256(vrf) % occupied_cells`. Picking from occupied cells only guarantees a winner whenever picks > 0. |
+| **5. Pay** | Same transaction: winners get the pot (minus 5% fee + 0.1 INIT resolver tip) **and** are minted `$ZERO`. Next round auto-opens. |
 
-| Step | What Happens |
-|:----:|:-------------|
-| **01** | **◉ Round Opens** — A new 60-second round begins, anchored to Initia L1 block time |
-| **02** | **◇ Pick Your Cell** — Choose any cell on the 5×5 grid. Costs **1 INIT** via `game::pick_cell`. Multiple players can pick the same cell |
-| **03** | **◈ Watch the Heatmap** — See where everyone's betting in real-time. Crowded cells split the pot. Lonely cells = full payout |
-| **04** | **⬡ VRF Reveals Winner** — The resolver submits 32 random bytes → the contract derives the winner on-chain: `keccak256(vrf) % occupied_cells` |
-| **05** | **◆ Auto-Paid** — Winners are paid INIT **and** minted **$ZERO** in the same `resolve_round` transaction. No claim step |
+A round with zero players is closed via `skip_empty_round` — no payout, no emission, no roll-forward.
 
-### The Strategy
+### Strategy tradeoff
 
-| Move | Play Style | What Happens |
-|:-----|:-----------|:-------------|
-| 👥 **The Crowd** | Pick popular cells | More likely someone shares your cell — but lower payout if you win |
-| 🐺 **The Loner** | Pick lonely cells | If it hits, you keep the **entire pot**. High risk, max reward |
-| 🧠 **The Analyst** | Read the heatmap | Find the edge between crowded and empty. Play the meta-game |
-
-> **The winner is always chosen from OCCUPIED cells only.** As long as at least one player joined, there is always a winner — the pot never rolls forward. A round with zero players is simply skipped (`skip_empty_round`), and no $ZERO is minted.
+| Play | When it pays |
+|:--|:--|
+| **The crowd** — pick a popular cell | Higher chance to share the win, but split pot. |
+| **The loner** — pick an empty cell | If only you picked it and `keccak256(vrf) % occupied` lands there, you take the entire pot. |
+| **The analyst** — read the heatmap | Edges between crowded and empty cells; play the meta. |
 
 ---
 
-## 💎 The Motherlode
+## The Motherlode
 
-Once every ~100 rounds, something special happens.
+Once every ~100 rounds the resolve produces a bonus round, decided by a second keccak derivation:
 
-A **Motherlode** round triggers — determined by a secondary VRF derivation:
-
-```
-keccak256(vrf || "bonus") % 100 == 0
+```move
+let is_bonus = keccak256(vrf || b"bonus") % bonus_round_odds == 0;
 ```
 
-You won't know it's a Motherlode until the round resolves. **Every round could be the one.**
+No one (including the fulfiller) can predict which round it'll be — the same VRF bytes decide both the winning cell and the bonus flag.
 
-|  | Standard Round | 💎 Motherlode |
-|:--|:--------------|:-------------|
-| **INIT Payout** | Normal pot split | **10× INIT** (funded from escrow treasury) |
-| **$ZERO Earned** | 100 ZERO | **1000 ZERO** |
-| **Odds** | 99 in 100 | **1 in 100** |
+| | Standard round | 💎 Motherlode |
+|:--|:--|:--|
+| INIT payout | full pot (95% after fee) | **10× pot** (funded from escrow treasury) |
+| $ZERO emission | 100 | **1000** |
+| Odds | 99/100 | **1/100** |
 
 ---
 
-## 🪙 $ZERO Token
+## $ZERO token
 
 | Property | Value |
-|:---------|:------|
-| **Symbol** | $ZERO |
-| **Standard** | Native fungible asset on Initia (MoveVM) |
-| **Decimals** | 6 |
-| **Total Supply** | 1,000,000,000 (1B) policy cap |
-| **Emission** | ~100 ZERO per round, split among winners |
-| **Daily Rate** | ~144,000 ZERO (at 60s rounds) |
-| **Motherlode** | 1000 ZERO on bonus rounds |
-| **Minter** | `gridzero::game` only (friend-gated) |
-| **Asset ID** | resolve via `zero_token::metadata_address()` after deploy |
+|:--|:--|
+| Symbol | `$ZERO` |
+| Name | `GridZero` |
+| Standard | Native Move FA (minitia_std::coin) |
+| Decimals | 6 |
+| Total supply policy | 1B cap (off-chain policy; on-chain mint cap is unconstrained, restricted only by the friend gate) |
+| Minter | `gridzero::game` only — `friend` declaration in `gridzero::zero_token` |
+| Metadata object | `0x1ed4c19b0f2410cc1773bf82d5b6d378bb61caeb821ce060018e456e72915924` |
+| Bank denom | `move/1ed4c19b0f2410cc1773bf82d5b6d378bb61caeb821ce060018e456e72915924` |
 
-### Payout Flow
+### Per-round payout split
 
 ```
-  ┌──────────────────┐
-  │   PLAYER POOL    │
-  │  N × 1 INIT      │
-  └────────┬─────────┘
-           │
-     ┌─────┼──────────────┐
-     ▼     ▼              ▼
-  ┌──────┐ ┌───────────┐ ┌────────────────┐
-  │  5%  │ │ 0.1 INIT  │ │   THE REST     │
-  │ FEE  │ │ RESOLVER  │ │   = PRIZE POOL │
-  │  →   │ │  BOT      │ │   → split among│
-  │ESCRW │ │           │ │     winners    │
-  └──────┘ └───────────┘ └────────────────┘
+   ENTRY POOL = N × 1 INIT
+            │
+   ┌────────┼────────────────────┐
+   ▼        ▼                    ▼
+ ┌─────┐  ┌────────────┐  ┌────────────────────┐
+ │ 5%  │  │ 0.1 INIT   │  │     remainder      │
+ │ fee │  │ resolver   │  │  → split among the │
+ │  →  │  │ tip → bot  │  │     winners        │
+ │esc. │  │            │  │                    │
+ └─────┘  └────────────┘  └────────────────────┘
 ```
 
-**Example:** 20 players enter, 3 picked the winning cell:
-- Pool = **20 INIT**
-- Protocol fee (5%) = 1 INIT → escrow (banked as `accumulated_fees`)
-- Resolver reward = 0.1 INIT → fulfiller bot
-- Prize pool = **18.9 INIT**
-- Each winner = **6.3 INIT** + a share of **100 $ZERO**, paid automatically on resolve
+Worked example (verified on round 367, tx [`B179A5C9…262224`](https://gridzero-sequencer-production.up.railway.app/tx?hash=B179A5C9C31A7CE5746ABF3009E9B1ADF3FE429B05BE6DA522F929F8FF262224)):
+- 1 player pot = 1.000 INIT
+- 0.050 INIT → escrow `accumulated_fees` (admin sweeps via `withdraw_fees`)
+- 0.100 INIT → fulfiller (resolver bot)
+- 0.850 INIT → winner
+- +100 $ZERO minted to winner
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-                         ┌──────────────────┐
-                         │     PLAYER       │
-                         │  Web App or      │
-                         │  Mini App        │
-                         └────────┬─────────┘
-                                  │ pick_cell (1 INIT)
-                                  ▼
-  ┌──────────────┐      ┌─────────────────┐      ┌──────────────┐
-  │              │      │                 │      │              │
-  │   keccak     │◀─────│  gridzero::game │─────▶│ gridzero::   │
-  │   (native    │ vrf  │  (Initia L1,    │ mint │ zero_token   │
-  │    Move      │bytes │   MoveVM)       │ $ZERO│ native FA    │
-  │    module)   │─────▶│                 │ on   │ (friend)     │
-  │  keccak256   │ %    │  INIT escrow    │ win  └──────────────┘
-  │  → winner    │occ.  │  Round mgmt     │
-  │              │      │  Winner + payout│
-  └──────────────┘      └────────┬────────┘
-                                 ▲
-                                 │ resolve_round(round_id, vrf)
-                        ┌────────┴────────┐
-                        │  RESOLVER BOT   │
-                        │  Node.js +      │
-                        │  @initia/       │
-                        │  initia.js      │
-                        │  block listener │
-                        └─────────────────┘
-                                 │
-                        ┌────────▼────────┐
-                        │    SUPABASE     │
-                        │  Round history  │
-                        │  + analytics    │
-                        └─────────────────┘
+                            User (Vercel app, Initia wallet)
+                                       │
+                       pick_cell(12)   ▼   1 INIT entry
+            ┌───────────────────────────────────────────────────┐
+            │                  gridzero-1  (L2)                 │
+            │   ┌─────────────────────────────────────────────┐ │
+            │   │   gridzero::game    ←friend→   ::zero_token │ │
+            │   │   round mgmt, escrow, keccak winner sel.    │ │
+            │   └─────────────────────────────────────────────┘ │
+            │             ▲                          ▲          │
+            │             │ resolve_round(id, vrf)   │ mint     │
+            │       ┌─────┴────────┐         ┌───────┴────────┐ │
+            │       │ Resolver bot │         │ INIT + $ZERO   │ │
+            │       │ (Railway)    │         │   → winner     │ │
+            │       └──────────────┘         └────────────────┘ │
+            └───────────────────────┬───────────────────────────┘
+                                    │ DA batches, output proposals
+                                    ▼ deposits relayed
+            ┌───────────────────────────────────────────────────┐
+            │              interwoven-1  (L1)                   │
+            │      OPHost bridge_id 47   +   IBC client/conn    │
+            └───────────────────────────────────────────────────┘
+                                    ▲
+                            ┌───────┴───────────┐
+                            │  OPinit executor  │   (Railway, opinitd v1.0.20)
+                            │  Hermes relayer   │   (Railway, hermes v1.13.3)
+                            └───────────────────┘
 ```
 
-### Tech Stack
-
-| Layer | Tech | Details |
-|:------|:-----|:--------|
-| **Chain** | Initia L1 (MoveVM) | `interwoven-1`, 500ms blocks, native Move modules |
-| **Entry Currency** | INIT | `uinit`, 6 decimal precision, native gas + entry fee |
-| **Randomness** | On-chain keccak VRF | Resolver submits 32 entropy bytes; winner derived on-chain, no oracle |
-| **Frontend** | Next.js + @initia/react-wallet-widget + @initia/initia.js | Deployed on Vercel |
-| **Wallet** | Initia Wallet / Keplr | Native + external wallet support |
-| **Resolver** | Node.js (@initia/initia.js) + Express SSE | Block listener, server-sent events to the app |
-| **RPC / REST** | rpc.initia.xyz / rest.initia.xyz | Public Initia mainnet endpoints |
-| **Backend** | Supabase | Round tracking + player analytics |
-
-### Round Lifecycle
+### Round lifecycle
 
 ```
-Block N         →  Round #42 starts (start_time = block timestamp)
-                   │
-Block N+1…N+120 →  Players call pick_cell (60-second window)
-                   │  Heatmap updates in real-time
-                   │
-~Block N+120    →  block timestamp ≥ end_time
-                   │
-                   ├─ Resolver detects round ended
-                   ├─ Generates 32 random bytes as VRF entropy
-                   ├─ Calls resolve_round(42, vrf)
-                   ├─ Winning cell = keccak256(vrf) % occupied_cells
-                   ├─ Motherlode? keccak256(vrf || "bonus") % 100 == 0
-                   ├─ Winners auto-paid INIT + minted $ZERO (same tx)
-                   ├─ Resolver reward + protocol fee banked
-                   ├─ Round #43 auto-starts
-                   │
-                   └─ (No claim step — payout is atomic with resolution)
+t = 0s    →  Round N opens (open_ts = block timestamp)
+              picks: 0   pot: 0
+              ▼
+t = 0-60s →  players call pick_cell — 1 INIT each
+              picks: K   pot: K INIT   heatmap updates
+              ▼
+t = 60s   →  close_ts reached, no more picks accepted
+              ▼
+t ≈ 60-90s →  resolver bot calls resolve_round(N, 32-byte-vrf):
+                winning_cell = keccak256(vrf) % occupied_cells
+                is_bonus     = keccak256(vrf || "bonus") % 100 == 0
+                ↳ winners receive INIT + $ZERO atomically
+                ↳ 5% fee banked in escrow, 0.1 INIT to fulfiller
+                ↳ Round N+1 auto-opens
 ```
 
-### Why keccak VRF (and no ZK)?
+### Why keccak, no ZK, no oracle
 
-The original GridZero on Base wrapped its randomness in Groth16 zero-knowledge proofs settled asynchronously on a Substrate chain. On Initia that entire layer is **removed** — and nothing is lost in trust terms:
+The original Base contract wrapped resolver entropy in a Groth16 proof settled on a Substrate chain. On Initia that layer is gone, and nothing is lost in trust terms:
 
-- **◇ The fulfiller always supplied the entropy.** Even on Base, the off-chain resolver submitted the VRF output; the ZK proof was only an audit trail, not the source of randomness.
-- **◇ Derivation is on-chain and deterministic.** `keccak256(vrf) % occupied_cells` runs inside the Move `resolve_round` transaction via Initia's native `keccak` module. Anyone can recompute it from the published `vrf` bytes.
-- **◇ Provably fair, fully on-chain.** The winning cell, the Motherlode flag, and every payout are emitted as Move events and visible on the explorer.
-- **◇ No oracle dependency.** No Chainlink, no third-party VRF service that could be manipulated — just the fulfiller's entropy and on-chain keccak.
+- **The fulfiller always supplied the entropy.** Even with ZK, the resolver chose the seed; the proof only attested to the derivation.
+- **Derivation is on-chain.** `keccak256(vrf) % occupied_cells` runs inside `resolve_round` via Initia's native `keccak` module — anyone can recompute the winning cell from the published `vrf` bytes.
+- **All events are public.** Winning cell, motherlode flag, every payout — emitted as Move events, queryable via the L2 RPC.
+- **Fulfiller is permissioned but separated.** A dedicated `fulfiller` address (not the admin / deployer) is the only signer authorized to call `resolve_round` / `skip_empty_round`. It can't drain the escrow, change config, or upgrade.
 
-> Initia exposes no native randomness module, so resolver-submitted entropy + on-chain keccak derivation is the faithful, trust-equivalent replacement for the Base ZK-VRF. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Initia exposes no native randomness module; this is the closest faithful replacement.
 
 ---
 
-## 📄 Smart Contracts
+## Chain & contract reference
 
-Package `gridzero` publishes two Move modules under `<gridzero-address>` (filled in after deploy — see [`docs/DEPLOY.md`](docs/DEPLOY.md)).
-
-### `gridzero::game` — [`<gridzero-address>`](https://scan.initia.xyz/interwoven-1)
-
-| Function | Description |
-|:---------|:------------|
-| `pick_cell(player, cell: u8)` | Enter current round — pay 1 INIT, pick cell 0–24 |
-| `resolve_round(fulfiller, round_id: u64, vrf: vector<u8>)` | Fulfiller-only: submit VRF entropy → derive winner, auto-pay, open next round |
-| `skip_empty_round(fulfiller, round_id: u64)` | Fulfiller-only: close a finished round nobody entered |
-| `fund_treasury(donor, amount: u64)` | Top up the escrow (e.g. to fund Motherlode payouts) — anyone may donate INIT |
-| `withdraw_fees(admin)` | Admin-only: move banked protocol fees from escrow to the fee recipient |
-| `set_fulfiller / set_admin / set_fee_recipient(admin, addr)` | Admin-only role setters |
-| `set_entry_fee / set_round_duration / set_protocol_fee_bps / …` | Admin-only config setters |
-| `get_current_round()` `#[view]` | Active round info + time remaining |
-| `get_round(round_id)` `#[view]` | Resolved round detail (winning cell, payouts, bonus flag) |
-| `get_cell_counts(round_id)` `#[view]` | Player count per cell (for the heatmap) |
-| `get_cell_players / get_player_cell / has_joined` `#[view]` | Per-player round queries |
-| `get_config()` `#[view]` | Current config + fulfiller + fee recipient |
-| `escrow_balance / accumulated_fees()` `#[view]` | Escrow pot + banked fees |
-
-### `gridzero::zero_token` — $ZERO
-
-Native Initia fungible asset (the Move-native replacement for the Base ERC-20 `ZeroToken`). Minting is restricted to `gridzero::game` via a `friend` declaration — the game module is the sole authorized minter, exactly as on Base. Views: `metadata()`, `metadata_address()`.
-
----
-
-## 🚀 Deployment
-
-### Contracts (initiad)
-
-Full step-by-step in [`docs/DEPLOY.md`](docs/DEPLOY.md). The short version:
-
-```bash
-# build with your deployer as the gridzero named address
-initiad move build --named-addresses gridzero=<gridzero-address>
-
-# publish both compiled modules to mainnet (init_module auto-runs:
-# creates the escrow + opens round #1)
-initiad move deploy --upgrade-policy COMPATIBLE \
-  --from <deployer-key> --gas auto --gas-adjustment 1.5 \
-  --gas-prices 0.015uinit \
-  --node https://rpc.initia.xyz --chain-id interwoven-1
-
-# point the game at the resolver wallet
-initiad tx move execute <gridzero-address> game set_fulfiller \
-  --args '["address:<fulfiller-address>"]' \
-  --from <deployer-key> --gas auto --gas-adjustment 1.5 \
-  --gas-prices 0.015uinit \
-  --node https://rpc.initia.xyz --chain-id interwoven-1
-```
-
-Or just run [`scripts/deploy.sh`](scripts/deploy.sh) with the env vars set.
-
-### Resolver Bot
-
-```bash
-cd resolver/
-npm install
-
-export INITIA_RPC=https://rpc.initia.xyz
-export INITIA_REST=https://rest.initia.xyz
-export CHAIN_ID=interwoven-1
-export GRIDZERO_ADDR=<gridzero-address>
-export FULFILLER_KEY=...   # mnemonic / key of the wallet set via set_fulfiller
-
-npm start
-```
-
-Send some INIT to the fulfiller wallet for gas. The bot earns **0.1 INIT per resolution** — self-sustaining once running.
-
----
-
-## ⚙️ Configuration
-
-Defaults are seeded by `init_module` and tunable by the admin via the `set_*` entry functions.
-
-| Parameter | Default | What it does |
-|:----------|:--------|:-------------|
-| `entry_fee` | 1 INIT (`1_000_000` uinit) | Cost to play a round |
-| `round_duration` | 60 seconds | How long each round lasts |
-| `protocol_fee_bps` | 500 (5%) | Protocol's cut of the pot |
-| `resolver_reward` | 0.1 INIT (`100_000` uinit) | Incentive for the resolver bot |
-| `zero_per_round` | 100 ZERO | Standard emission per round (split among winners) |
-| `motherlode_per_round` | 1000 ZERO | Bonus emission on Motherlode rounds |
-| `bonus_round_odds` | 100 | 1-in-N chance of Motherlode |
-| `bonus_multiplier` | 10× | INIT multiplier for Motherlode |
-
----
-
-## 🔗 Links
+### `gridzero-1` (the appchain)
 
 | | |
 |:--|:--|
-| 🎮 **Web App** | [gridzero-one.vercel.app](https://gridzero-one.vercel.app) |
-| ◉ **Mini App** | [gridzero-miniapp.vercel.app](https://gridzero-miniapp.vercel.app) |
-| 📄 **Game Module** | [`gridzero::game`](https://scan.initia.xyz/interwoven-1) — `<gridzero-address>` |
-| 🪙 **$ZERO Token** | [`gridzero::zero_token`](https://scan.initia.xyz/interwoven-1) — `<gridzero-address>` |
-| ⬡ **Explorer** | [scan.initia.xyz/interwoven-1](https://scan.initia.xyz/interwoven-1) |
-| ◆ **Chain** | [Initia](https://initia.xyz) (`interwoven-1`, MoveVM L1) |
+| Chain ID | `gridzero-1` |
+| L1 | `interwoven-1` (Initia mainnet) |
+| Codebase | [`initia-labs/minimove`](https://github.com/initia-labs/minimove) v1.1.12 |
+| Bridge ID | **47** |
+| Bridge contract on L1 | `init1rlrcdw6qmz6hyscun2t7czcvhwssx78dnrt333lhyz9cmze3wh9sx9qnu9` |
+| DA layer | Initia DA |
+| Submission interval / finalization | 1 hour / 7 days |
+| Native gas | `uinit`, `fixed_min_gas_price = 0` |
+| Block time | ~28s (single sequencer) |
+| RPC | `https://gridzero-sequencer-production.up.railway.app` |
+| REST | `https://gridzero-rest-production.up.railway.app` |
+| Genesis | [`…/genesis`](https://gridzero-sequencer-production.up.railway.app/genesis) |
+
+### Move modules
+
+Both modules deployed under `init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc` (hex `0xe4bed97036af970f98feeb5593d6f19b9bca1899`) on **both** chains — original L1 deploy on `interwoven-1` is still live; canonical game now runs on `gridzero-1`.
+
+| Module | Purpose |
+|:--|:--|
+| `gridzero::game` | Round management, INIT escrow, keccak winner selection, payouts, admin & fulfiller roles |
+| `gridzero::zero_token` | $ZERO native FA; friend-gated mint to `gridzero::game` only |
+
+### Entry, view, and admin functions
+
+| Function | Description |
+|:--|:--|
+| `pick_cell(player, cell: u8)` | Enter the current round, pay entry fee, claim a cell (0–24) |
+| `resolve_round(fulfiller, id, vrf: vector<u8>)` | Fulfiller-only: submit VRF, derive winner, auto-pay |
+| `skip_empty_round(fulfiller, id)` | Fulfiller-only: close a round with no picks |
+| `fund_treasury(donor, amount)` | Anyone donates INIT to the escrow (e.g. to seed motherlodes) |
+| `withdraw_fees(admin)` | Admin sweeps `accumulated_fees` to the fee recipient |
+| `set_fulfiller / set_admin / set_fee_recipient(admin, addr)` | Admin role rotation |
+| `set_entry_fee / set_round_duration / set_protocol_fee_bps / set_resolver_reward / set_zero_per_round / set_motherlode_per_round / set_bonus_round_odds / set_bonus_multiplier(admin, v)` | Admin config setters (each input-validated) |
+| `get_current_round / get_round / get_cell_counts / get_cell_players / get_player_cell / has_joined / get_config / escrow_balance / accumulated_fees` | View functions |
+
+### Default config (live)
+
+| Parameter | Value |
+|:--|:--|
+| `entry_fee` | 1 INIT (`1_000_000 uinit`) |
+| `round_duration` | 60s |
+| `protocol_fee_bps` | 500 (5%) |
+| `resolver_reward` | 0.1 INIT (`100_000 uinit`) |
+| `zero_per_round` | 100 $ZERO (`100_000_000`) |
+| `motherlode_per_round` | 1000 $ZERO (`1_000_000_000`) |
+| `bonus_round_odds` | 100 (1-in-100) |
+| `bonus_multiplier` | 10× |
+| `fulfiller` | `init12dlruke9paqfm25gtetuzgz843hatc8dngqlsj` |
+| `admin` + `fee_recipient` | `init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc` |
+
+### IBC channels (gridzero-1 ↔ interwoven-1)
+
+| Port | gridzero-1 | interwoven-1 |
+|:--|:--|:--|
+| `transfer` (ICS-20) | `channel-0` | `channel-110` |
+| `nft-transfer` (ICS-721) | `channel-1` | `channel-111` |
+
+### OPinit roles on bridge 47
+
+| Role | L1 address |
+|:--|:--|
+| Bridge executor (creator) | `init1egjtr52u25cyuulph34e02mgtntjxnrwrvpfc6` |
+| Output submitter (proposer) | `init1tmtjagw5r8zg0kgl3vzukkr2ack3vnrdqgjg78` |
+| Batch submitter | `init1qtm2akzgefqxk8smjaj49x5d34vey3a2ttdtd7` |
+| Challenger | `init1yumu4xcpxkwncu620a8pr65sskl7h0wpuacrq6` |
+
+---
+
+## Live infrastructure
+
+Five long-running services backed by Railway, all reachable independently.
+
+| Service | Stack | Purpose |
+|:--|:--|:--|
+| **Sequencer** | `minimove v1.1.12` (prebuilt linux-x86_64) on `debian:bookworm-slim`; persistent volume; node-home auto-restored from baked tarball | Produces `gridzero-1` blocks |
+| **REST proxy** | `caddy:2-alpine` reverse-proxy | Public REST on its own domain (Railway gives one HTTP domain per service) |
+| **OPinit executor** | `opinitd v1.0.20` (prebuilt) | DA batch submission, L1→L2 deposit relay, 1h output proposals |
+| **Hermes relayer** | `hermes v1.13.3` (prebuilt) on `debian:trixie-slim` (needs glibc 2.41) | IBC packet relay on transfer + nft-transfer channels |
+| **Resolver bot** | Node + `@initia/initia.js` + Express SSE | Closes each round (resolve or skip) every 60s, signs as `fulfiller` |
+
+Frontend on Vercel (Next.js 15.1 + React 19 + `@initia/react-wallet-widget`).
+
+---
+
+## Status
+
+**LIVE on Initia mainnet since 2026-05-28**, end-to-end tested (deposit-deploy → publish → pick → resolve → atomic payout → DA batch on L1 — all confirmed on chain).
+
+| | |
+|:--|:--|
+| ✅ Appchain producing blocks | yes — verifiable at `/status` on the sequencer RPC |
+| ✅ L1↔L2 bridge active | bridge 47, executor relaying batches every block, output proposals on the hour |
+| ✅ IBC channels open | both `transfer` and `nft-transfer` relayed live by Hermes |
+| ✅ Game playable | tested round 367 (single-player, deployer wallet, correct payout) |
+| 🟡 Initia Scan listing | pending — [registry PR #835](https://github.com/initia-labs/initia-registry/pull/835) (CodeRabbit ✓, awaiting human review) |
+| 🟡 Move source verification | submitted, Celatone verifier currently rejects packages with non-trivial git deps |
+| ⚪ Challenger bot | not deployed — `opinitd v1.0.20` doesn't expose challenger as a separate binary |
+
+---
+
+## Links
+
+| | |
+|:--|:--|
+| Game | https://gridzero-initia.vercel.app |
+| Sequencer RPC | https://gridzero-sequencer-production.up.railway.app |
+| REST API | https://gridzero-rest-production.up.railway.app |
+| Resolver SSE + history | https://gridzero-resolver-production.up.railway.app |
+| Source | https://github.com/penguinpecker/gridzero-initia |
+| Registry PR | https://github.com/initia-labs/initia-registry/pull/835 |
+| L1 modules on Initia Scan | https://scan.initia.xyz/interwoven-1/accounts/init1ujldjupk47tslx87ad2e84h3nwdu5xyex9rcdc |
+| OPinit bridge 47 on L1 | https://scan.initia.xyz/interwoven-1/accounts/init1rlrcdw6qmz6hyscun2t7czcvhwssx78dnrt333lhyz9cmze3wh9sx9qnu9 |
 
 ---
 
 <p align="center">
-  <strong>◇ ◈ TRUST THE MATH · FULL DEGEN ◈ ◇</strong><br/>
-  <sub>Built with keccak, bad decisions, and INIT you probably shouldn't be gambling.</sub>
+  <sub>◇ ◈ &nbsp; trust the math &nbsp; ◈ ◇</sub>
 </p>

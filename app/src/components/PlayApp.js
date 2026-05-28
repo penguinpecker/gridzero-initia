@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { CHAIN_ID } from "@/lib/initia";
+import { GRIDZERO_LAYER } from "@/lib/gridzeroLayer";
 import TheGrid from "./TheGrid";
 
 // Loads the browser-only Initia WalletWidgetProvider, then mounts TheGrid INSIDE
@@ -42,7 +43,7 @@ export default function PlayApp() {
   }
 
   return (
-    <Provider chainId={CHAIN_ID} theme="dark">
+    <Provider chainId={CHAIN_ID} customLayer={GRIDZERO_LAYER} theme="dark">
       <TheGrid />
     </Provider>
   );
