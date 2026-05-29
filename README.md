@@ -311,7 +311,7 @@ Frontend on Vercel (Next.js 15.1 + React 19 + `@initia/react-wallet-widget`).
 
 ## Contributors
 
-- [**@penguinpecker**](https://github.com/penguinpecker) — design, build, deploy, ops
+- [**@penguinpecker**](https://github.com/penguinpecker) — creator & maintainer: design, build, deploy, ops
 - [**Claude Opus 4.7**](https://claude.com/claude-code) — code assistance via Claude Code
 
 ---
