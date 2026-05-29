@@ -277,10 +277,19 @@ export default function TheGrid() {
   // ─── Poll state via Initia Move views (see @/lib/initia) ───
   const pollError = useRef(null);
   const pollCount = useRef(0);
-  const pollBusy = useRef(false);
+  // In-flight guard as a timestamp (ms); 0 = idle. A plain boolean here could
+  // wedge forever if a poll's awaited read failed to settle and its finally never
+  // ran — every later tick AND the SSE onRoundResolved callback (both call
+  // pollState) would then no-op, freezing the resolution spinner until a manual
+  // refresh. As a timestamp we add a watchdog: a poll older than POLL_WATCHDOG_MS
+  // is treated as dead so a new poll can re-enter and the UI self-heals.
+  const pollBusy = useRef(0);
+  const POLL_WATCHDOG_MS = 20000; // > 2× REST_TIMEOUT_MS so legit slow polls aren't pre-empted
   const pollState = useCallback(async () => {
-    if (pollBusy.current) return; // skip if previous poll still running
-    pollBusy.current = true;
+    // Skip only while a poll is genuinely in flight (started < watchdog ago).
+    if (pollBusy.current && Date.now() - pollBusy.current < POLL_WATCHDOG_MS) return;
+    const pollStartedAt = Date.now();
+    pollBusy.current = pollStartedAt;
     pollCount.current++;
     try {
       // 1. Current round (CRITICAL - everything depends on this)
@@ -359,7 +368,9 @@ export default function TheGrid() {
       pollError.current = "Poll error: " + (e?.message || "unknown");
       console.error("Poll error:", e);
     } finally {
-      pollBusy.current = false;
+      // Only clear if we're still the most-recent poll — the watchdog may have let
+      // a newer poll start after we were deemed dead; don't clobber its marker.
+      if (pollBusy.current === pollStartedAt) pollBusy.current = 0;
     }
   }, [address, roundEnd]);
 
@@ -367,10 +378,11 @@ export default function TheGrid() {
     pollState();
     const tick = () => {
       pollState();
-      // Fast poll (500ms) while waiting for resolution, normal (3s) otherwise
-      // When SSE connected, slow to 10s as safety net
+      // While a round has ended but isn't resolved yet, poll fast (500ms) EVEN when
+      // SSE is connected — a dropped or late round_resolved event must not leave the
+      // resolution spinner up. Otherwise: SSE connected → 10s safety net, else 3s.
       const resolving = roundEnd > 0 && Date.now() / 1000 > roundEnd && !resolvedRef.current;
-      const interval = sseConnected ? 10000 : (resolving ? 500 : 3000);
+      const interval = resolving ? 500 : (sseConnected ? 10000 : 3000);
       pollRef.current = setTimeout(tick, interval);
     };
     pollRef.current = setTimeout(tick, 3000);

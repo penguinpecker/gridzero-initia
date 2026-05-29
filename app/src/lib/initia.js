@@ -22,7 +22,7 @@
 // VERIFY (docs): https://docs.initia.xyz  → SDKs / initia.js ; "Move view function"
 // ═══════════════════════════════════════════════════════════════
 
-import { RESTClient, MsgExecute, MsgSend, bcs } from "@initia/initia.js";
+import { RESTClient, APIRequester, MsgExecute, MsgSend, bcs } from "@initia/initia.js";
 
 // ─── Chain config ───
 export const CHAIN_ID = process.env.NEXT_PUBLIC_INITIA_CHAIN_ID || "interwoven-1";
@@ -41,10 +41,18 @@ export const INIT_DECIMALS = 6; // uinit → INIT
 export const ZERO_DECIMALS = 6; // $ZERO native fungible asset
 
 // ─── Shared REST client (reads). Wallet handles writes via requestInitiaTx. ───
-export const rest = new RESTClient(REST_URL, {
-  chainId: CHAIN_ID,
-  gasPrices: GAS_PRICE,
-});
+// Hard per-request timeout (axios) on EVERY chain read. The REST node can
+// occasionally accept a connection and then hang with no response (Railway
+// cold-start / idle / a TCP blip with no FIN). Without a timeout the underlying
+// axios request waits indefinitely, which wedges the frontend poll loop (its
+// in-flight guard never resets). A timed-out request rejects with ECONNABORTED
+// instead, so callers' catch/finally run and polling self-heals on the next tick.
+export const REST_TIMEOUT_MS = 8000;
+export const rest = new RESTClient(
+  REST_URL,
+  { chainId: CHAIN_ID, gasPrices: GAS_PRICE },
+  new APIRequester(REST_URL, { timeout: REST_TIMEOUT_MS })
+);
 
 // ═══════════════════════════════════════════════════════════════
 // BCS arg encoding — Move entry/view args must be base64-BCS strings.
